@@ -1,0 +1,72 @@
+
+import logging
+from typing import Optional, Tuple
+
+from app.domain.interfaces import SessionRepositoryInterface
+from app.ml.authenticity import compute_authenticity_score
+from app.ml.baseline import baseline_score_applicant
+from app.ml.data_quality import compute_data_quality_score
+from app.ml.error_analysis import detect_evaluation_inconsistencies, identify_edge_cases
+from app.ml.evaluation import agreement_score
+from app.ml.explainability import compute_feature_importance, explain_recommendation
+from app.ml.iaf_scoring import compute_iaf_score
+from app.ml.language_proficiency import compute_language_proficiency
+from app.ml.triage import compute_priority_tier
+
+logger = logging.getLogger(__name__)
+
+
+class EnhancedAnalysisUseCase:
+    def __init__(self, session_repo: SessionRepositoryInterface):
+        self.session_repo = session_repo
+
+    async def execute(self, session_id: str) -> Tuple[Optional[dict], Optional[str]]:
+        session = await self.session_repo.get_by_id(session_id)
+        if not session:
+            return None, "Session not found"
+
+        transcript = session.transcript
+        applicant_data = session.applicant_data
+        evaluation = session.evaluation
+
+        data_quality = compute_data_quality_score(applicant_data, transcript, evaluation)
+        baseline = baseline_score_applicant(applicant_data)
+
+        ai_recommendation = (evaluation or {}).get("recommendation")
+        agreement = agreement_score(ai_recommendation, baseline["recommendation"])
+
+        inconsistencies = detect_evaluation_inconsistencies(evaluation, applicant_data)
+        edge_cases = identify_edge_cases(transcript, applicant_data)
+
+        explanation = explain_recommendation(evaluation, applicant_data, baseline)
+        feature_importance = compute_feature_importance(applicant_data, evaluation)
+
+        authenticity = compute_authenticity_score(applicant_data, transcript)
+        language_proficiency = compute_language_proficiency(transcript, applicant_data)
+        iaf = compute_iaf_score(applicant_data, session.program)
+        triage_priority = compute_priority_tier(evaluation, data_quality, agreement, edge_cases, inconsistencies.get("inconsistencies", []), authenticity)
+
+        result = {
+            "session_id": session_id,
+            "data_quality": data_quality,
+            "baseline_evaluation": baseline,
+            "agreement": agreement,
+            "error_analysis": {
+                "inconsistencies": inconsistencies,
+                "edge_cases": edge_cases,
+            },
+            "explainability": {
+                "explanation": explanation,
+                "feature_importance": feature_importance,
+            },
+            "authenticity": authenticity,
+            "language_proficiency": language_proficiency,
+            "iaf_score": iaf,
+            "triage": {"priority": triage_priority},
+        }
+
+        logger.info(
+            f"Enhanced analysis complete for session {session_id} — "
+            f"quality={data_quality['overall_score']}, agreement={agreement['agreement']}"
+        )
+        return result, None

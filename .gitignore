@@ -1,0 +1,5 @@
+.env
+__pycache__/
+.codemie/
+.claude/
+CLAUDE.md
