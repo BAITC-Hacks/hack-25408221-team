@@ -8,7 +8,7 @@ client.aio.live.connect) so tests can script a conversation without a network ca
 import asyncio
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 
 @dataclass
@@ -119,10 +119,29 @@ class FakeLiveConnect:
         return False
 
 
-def make_fake_genai_client(session: FakeLiveSession):
-    """Returns an object shaped like genai.Client(...) with .aio.live.connect(...)."""
+def make_fake_genai_client(session_or_sessions: Union[FakeLiveSession, List[FakeLiveSession]]):
+    """Returns an object shaped like genai.Client(...) with .aio.live.connect(...).
+
+    Pass a single FakeLiveSession to have every connect() call return it (the
+    original behavior, used by most tests). Pass a list to hand back a
+    distinct session on each successive connect() call -- needed for B10
+    reconnect tests, where the second connection must be a genuinely fresh
+    Gemini Live session, not a replay of the first one's exhausted responses.
+    The last list entry is reused if connect() is called more times than the
+    list has sessions. Every call's kwargs (model, config, ...) are recorded
+    on the returned client's `connect_calls` for assertions."""
+    sessions = (
+        session_or_sessions
+        if isinstance(session_or_sessions, list)
+        else [session_or_sessions]
+    )
+    connect_calls: List[dict] = []
 
     def connect(**kwargs):
-        return FakeLiveConnect(session)
+        connect_calls.append(kwargs)
+        index = min(len(connect_calls) - 1, len(sessions) - 1)
+        return FakeLiveConnect(sessions[index])
 
-    return SimpleNamespace(aio=SimpleNamespace(live=SimpleNamespace(connect=connect)))
+    client = SimpleNamespace(aio=SimpleNamespace(live=SimpleNamespace(connect=connect)))
+    client.connect_calls = connect_calls
+    return client

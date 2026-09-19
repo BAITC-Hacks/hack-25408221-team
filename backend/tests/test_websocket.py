@@ -103,6 +103,27 @@ def _make_session_provider():
     return provide_session
 
 
+def test_build_resume_summary():
+    """B10: build_resume_summary condenses a saved transcript into a short
+    recap for the RECONNECTION CONTEXT block -- empty transcript yields no
+    context, and a transcript over RESUME_SUMMARY_MAX_CHARS is tail-truncated
+    rather than sent in full (only recent context matters for continuity)."""
+    assert handler.build_resume_summary([]) is None
+
+    transcript = [
+        {"role": "user", "text": "Hello, I have to go."},
+        {"role": "assistant", "text": "Sure, catch you soon."},
+    ]
+    summary = handler.build_resume_summary(transcript)
+    assert "user: Hello, I have to go." in summary
+    assert "assistant: Sure, catch you soon." in summary
+
+    long_transcript = [{"role": "user", "text": "x" * 3000}]
+    long_summary = handler.build_resume_summary(long_transcript)
+    assert len(long_summary) == handler.RESUME_SUMMARY_MAX_CHARS + 1
+    assert long_summary.endswith("x" * 100)
+
+
 def test_websocket_end_session_persists_transcript_and_evaluation(monkeypatch):
     provide_session = _make_session_provider()
     app.dependency_overrides[get_session] = provide_session
@@ -584,6 +605,86 @@ def test_websocket_disconnect_mid_interview_marks_session_incomplete_with_partia
             user_entries = [e for e in body["transcript"] if e["role"] == "user"]
             assert len(user_entries) == 1
             assert user_entries[0]["text"] == "Hello, I have to go."
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
+def test_websocket_reconnect_seeds_new_gemini_session_with_transcript_recap(monkeypatch):
+    """B10 regression: reconnecting to the same session_id after a
+    mid-interview drop must not silently restart the interview from scratch.
+    The server should open a fresh Gemini Live session seeded with a recap of
+    the transcript the first disconnect's mark_incomplete() already saved,
+    and the final saved transcript must include both the pre- and
+    post-reconnect turns."""
+    provide_session = _make_session_provider()
+    app.dependency_overrides[get_session] = provide_session
+    monkeypatch.setattr(handler, "get_session", provide_session)
+    monkeypatch.setattr(websocket_route, "get_session", provide_session)
+    monkeypatch.setattr(settings, "admin_creation_secret", "test-admin-secret")
+
+    first_session = FakeLiveSession(
+        responses=[user_transcript("Hello, I have to go.")],
+        hang_when_exhausted=True,
+    )
+    second_session = FakeLiveSession(
+        responses=[
+            user_transcript("Sorry, I'm back now."),
+            end_session_call(
+                {
+                    "applicant_notes": {},
+                    "overall_impression": "Resumed and finished strong",
+                    "recommendation": "recommended",
+                }
+            ),
+        ]
+    )
+    fake_client = make_fake_genai_client([first_session, second_session])
+    monkeypatch.setattr(handler, "get_genai_client", lambda: fake_client)
+
+    try:
+        with TestClient(app) as client:
+            session_id, token = _register_and_create_session(
+                client, "reconnect@example.com"
+            )
+            admin_token = _admin_token(
+                client, "test-admin-secret", "reconnect-admin@example.com"
+            )
+
+            with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws:
+                status_msg = ws.receive_json()
+                assert status_msg["type"] == "status"
+
+                ws.close(1000)
+                body = _poll_session_status(client, session_id, admin_token)
+
+            assert body["status"] == "incomplete"
+
+            with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws:
+                status_msg = ws.receive_json()
+                assert status_msg["type"] == "status"
+
+                ended_msg = ws.receive_json()
+                assert ended_msg["type"] == "interview_ended"
+
+            session_res = client.get(
+                f"/api/admin/sessions/{session_id}",
+                headers={"Authorization": f"Bearer {admin_token}"},
+            )
+            body = session_res.json()
+            assert body["status"] == "completed"
+            user_entries = [e for e in body["transcript"] if e["role"] == "user"]
+            assert [e["text"] for e in user_entries] == [
+                "Hello, I have to go.",
+                "Sorry, I'm back now.",
+            ]
+
+            assert len(fake_client.connect_calls) == 2
+            first_instruction = fake_client.connect_calls[0]["config"].system_instruction
+            assert "RECONNECTION CONTEXT" not in first_instruction
+
+            resumed_instruction = fake_client.connect_calls[1]["config"].system_instruction
+            assert "RECONNECTION CONTEXT" in resumed_instruction
+            assert "Hello, I have to go." in resumed_instruction
     finally:
         app.dependency_overrides.pop(get_session, None)
 

@@ -66,6 +66,25 @@ def validate_end_session_args(args: dict) -> dict:
         "concerns": concerns,
     }
 
+
+RESUME_SUMMARY_MAX_CHARS = 1500
+
+
+def build_resume_summary(transcript: List[dict]) -> Optional[str]:
+    """B10: a reconnect opens a brand-new Gemini Live session with no memory
+    of the dropped one -- condense the prior partial transcript (already
+    saved to the DB by mark_incomplete on disconnect) into a short recap so
+    the model can continue naturally instead of restarting the interview.
+    Tail-truncated since only the most recent context matters for continuity."""
+    if not transcript:
+        return None
+    lines = [f"{entry['role']}: {entry['text']}" for entry in transcript]
+    summary = "\n".join(lines)
+    if len(summary) > RESUME_SUMMARY_MAX_CHARS:
+        summary = "…" + summary[-RESUME_SUMMARY_MAX_CHARS:]
+    return summary
+
+
 # Tracks session_ids with an open live connection. Only safe because the app
 # runs as a single uvicorn worker (see Dockerfile) -- state here is process-wide
 # in-memory, not shared across workers/instances. Checked and updated with no
@@ -105,10 +124,17 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
         await websocket.close()
         return
 
-    client = get_genai_client()
-    config = build_live_connect_config()
+    existing_transcript: List[dict] = []
+    async for db_session in get_session():
+        existing = await SessionRepository(db_session).get_by_id(session_id)
+        if existing and existing.transcript:
+            existing_transcript = list(existing.transcript)
+        break
 
-    transcript: List[dict] = []
+    client = get_genai_client()
+    config = build_live_connect_config(build_resume_summary(existing_transcript))
+
+    transcript: List[dict] = list(existing_transcript)
     current_turn: Optional[dict] = None
     session_start = datetime.now(timezone.utc)
     # Marks the start of the current "waiting for the user" window: reset

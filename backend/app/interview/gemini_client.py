@@ -1,3 +1,5 @@
+from typing import Optional
+
 from google import genai
 from google.genai import types
 
@@ -11,7 +13,9 @@ def get_genai_client():
     )
 
 
-def build_live_connect_config() -> types.LiveConnectConfig:
+def build_live_connect_config(
+    resume_context: Optional[str] = None,
+) -> types.LiveConnectConfig:
     return types.LiveConnectConfig(
         response_modalities=["AUDIO"],
         speech_config=types.SpeechConfig(
@@ -19,7 +23,9 @@ def build_live_connect_config() -> types.LiveConnectConfig:
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Aoede")
             )
         ),
-        system_instruction=build_system_instruction(settings.max_interview_duration),
+        system_instruction=build_system_instruction(
+            settings.max_interview_duration, resume_context
+        ),
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
         realtime_input_config=types.RealtimeInputConfig(

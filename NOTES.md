@@ -797,6 +797,73 @@ the prompt gets replaced by the configured one — not new model behavior, so it
   - Frontend: `npx tsc --noEmit` — zero new errors in touched files (same pre-existing baseline).
     `npx next build` — compiles, same route shapes.
 
+### B10: Reconnection and network loss handling
+
+Confirmed by reading the code, then fixed. Task description: "handle a dropped network mid-
+interview." Read `handler.py` and `use-interview-call.ts` end to end first to see what B6/B7
+already covered vs. what was actually missing.
+
+1. **Already handled (B6/B7, pre-existing).** A disconnect mid-interview already lands in
+   `_run_interview_session`'s `except WebSocketDisconnect` branch, which calls
+   `mark_incomplete()` — the transcript-so-far is saved and the session status becomes
+   `"incomplete"`. So a drop never silently loses data; it just had no path back into a live
+   call. That's the actual gap this task is about.
+2. **Gap 1 (frontend): no reconnect attempt at all.** `use-interview-call.ts`'s `ws.onclose`
+   treated every non-terminal close as fatal — one network blip ended the interview outright,
+   even though the server-side session was still `"incomplete"` and resumable. Added
+   `createSocket()`/`attachSocketHandlers()` (extracted from the old inline `onopen`/
+   `onmessage`/`onclose` setup) so a reconnect can reuse the same handler wiring, and a bounded
+   exponential-backoff retry (3 attempts, 1s/2s/4s) in `onclose` for exactly the case that used
+   to be treated as fatal: an unexpected close **after** the interview was genuinely active
+   (`mediaReadyRef`). First-connection failures and server-classified terminal errors (which
+   already set `status: "error"` via an explicit `"error"` message before the close fires) are
+   unchanged — the gate is specifically "was this session running, then dropped," not "did any
+   close event happen." New `"reconnecting"` `CallStatus` drives new UI states in
+   `apply/interview/page.tsx` (status pill, a dedicated alert, REC badge/timer kept visible).
+   Local media capture needed no changes: the AudioWorklet's `port.onmessage` reads
+   `wsRef.current` fresh on every audio frame, and `createSocket()` reassigns that ref on each
+   reconnect, so audio streaming and the on-device `MediaRecorder` recording continue through a
+   blip untouched.
+3. **Gap 2 (backend): a reconnect opened a brand-new Gemini Live session with zero memory of
+   the dropped one.** Even once the frontend could reconnect, the new WS connection called
+   `_run_interview_session` from scratch, which opened a fresh `client.aio.live.connect(...)`
+   with the same static system prompt — the model would restart the greeting/Phase 0 and re-ask
+   already-answered questions, from the applicant's perspective a broken interview even though
+   the transcript byte-for-byte survived. Added `build_resume_summary()` (`handler.py`): before
+   opening the Gemini connection, look up the session's already-saved transcript (populated by
+   `mark_incomplete` on the prior disconnect); if non-empty, condense it (tail-truncated to
+   1500 chars) and thread it through `build_live_connect_config(resume_context)` ->
+   `build_system_instruction(max_duration_seconds, resume_context)`, which appends a
+   "RECONNECTION CONTEXT" block telling the model to acknowledge the interruption and continue
+   rather than restart. For a brand-new session `existing.transcript` is `None`, so
+   `resume_context` is `None` and the rendered prompt is byte-for-byte identical to before this
+   change — the non-resume path is untouched, consistent with "behavior-preserving" and with
+   this being a value/data injection into an existing prompt-builder, not a prompt redesign
+   (same category as B13's precedent). The transcript list built in `_run_interview_session` is
+   also now seeded from the existing DB transcript, so the final saved transcript spans both
+   connections in order, not just the post-reconnect half.
+
+- **Verification:**
+  - Backend: extended `tests/fakes/gemini.py`'s `make_fake_genai_client` to accept a list of
+    `FakeLiveSession`s (one per successive `connect()` call, needed so a reconnect test gets a
+    genuinely fresh session instead of replaying the first one's exhausted script) and to record
+    every `connect(**kwargs)` call for assertions. Added `test_build_resume_summary` (pure-
+    function unit test: empty transcript -> `None`; short transcript renders both roles;
+    over-length transcript truncates to exactly `RESUME_SUMMARY_MAX_CHARS + 1` chars) and
+    `test_websocket_reconnect_seeds_new_gemini_session_with_transcript_recap` (full integration:
+    first WS connection closes mid-interview, session becomes `"incomplete"`; second WS
+    connection to the same `session_id` completes the interview; asserts the final transcript
+    contains both connections' user turns in order, `connect_calls` has length 2, the first
+    connect's system instruction does NOT contain "RECONNECTION CONTEXT", and the second's DOES
+    and includes the pre-reconnect turn's text). Full suite before and after: **28 passed**
+    (26 + 2 new), no regressions.
+  - Frontend: `npx tsc --noEmit` — zero new errors in touched files. `npx next build` —
+    compiles, all 11 routes generated, no errors.
+  - Not covered by an automated test (browser-only, matches the sprint's stated CI carve-out):
+    the actual `WebSocket` reconnect timing/backoff behavior in `use-interview-call.ts`. The
+    resume-context half (the part that can silently break the interview if it regresses) is
+    fully covered by the backend integration test above.
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though

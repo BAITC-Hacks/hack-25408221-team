@@ -3,10 +3,15 @@ import { getToken, api } from "@/lib/api"
 import { useMediaPermissions } from "@/hooks/use-media-permissions"
 import { useRecordingUpload } from "@/hooks/use-recording-upload"
 
-export type CallStatus = "idle" | "connecting" | "active" | "ended" | "error"
+export type CallStatus = "idle" | "connecting" | "reconnecting" | "active" | "ended" | "error"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 const TOTAL_QUESTIONS = 6
+// B10: on an unexpected mid-interview close, retry the signaling socket to
+// the same session_id instead of ending the call outright. Capped and
+// backed off so a persistently dead network still fails visibly.
+const MAX_RECONNECT_ATTEMPTS = 3
+const RECONNECT_BASE_DELAY_MS = 1000
 
 // Fallback copy for an abnormal close that arrives with no preceding "error"
 // message frame. In the normal case the server (websocket.py/handler.py)
@@ -62,6 +67,12 @@ export function useInterviewCall(userId: string | null) {
   const nextPlayAtRef = useRef(0)
   const scheduledSourcesRef = useRef<AudioBufferSourceNode[]>([])
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // B10 reconnect bookkeeping. mediaReadyRef tracks whether the local
+  // capture/recording pipeline has already been set up once -- reconnects
+  // only need a new signaling socket, not a fresh getUserMedia() prompt.
+  const reconnectAttemptsRef = useRef(0)
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const mediaReadyRef = useRef(false)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -191,6 +202,10 @@ export function useInterviewCall(userId: string | null) {
 
   const endSession = useCallback(
     (closeWs = true) => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+        reconnectTimeoutRef.current = null
+      }
       stopTimer()
       stopCapture()
       if (closeWs) {
@@ -201,6 +216,16 @@ export function useInterviewCall(userId: string | null) {
     },
     [stopTimer, stopCapture],
   )
+
+  const createSocket = useCallback((sid: string): WebSocket => {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+    const host = API_URL.replace(/.*\/\//, "").replace(/\/.*$/, "")
+    const token = getToken()
+    const ws = new WebSocket(`${protocol}//${host}/ws/${sid}${token ? `?token=${token}` : ""}`)
+    ws.binaryType = "arraybuffer"
+    wsRef.current = ws
+    return ws
+  }, [])
 
   const createSession = useCallback(async (): Promise<string | null> => {
     const program = localStorage.getItem("program") || "General"
@@ -262,6 +287,12 @@ export function useInterviewCall(userId: string | null) {
     setShowCheckIn(false)
     setCurrentQuestion(0)
     setErrorMessage("")
+    reconnectAttemptsRef.current = 0
+    mediaReadyRef.current = false
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current)
+      reconnectTimeoutRef.current = null
+    }
     recordedBlobRef.current = null
     chunksRef.current = []
     setStatus("connecting")
@@ -286,141 +317,173 @@ export function useInterviewCall(userId: string | null) {
       setAudioOnly(true)
     }
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
-    const host = API_URL.replace(/.*\/\//, "").replace(/\/.*$/, "")
-    const token = getToken()
-    const ws = new WebSocket(`${protocol}//${host}/ws/${sid}${token ? `?token=${token}` : ""}`)
-    ws.binaryType = "arraybuffer"
-    wsRef.current = ws
-
-    ws.onopen = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true },
-          video: media.hasVideo
-            ? { facingMode: "user", width: { ideal: 1280 } }
-            : false,
-        })
-        streamRef.current = stream
-
-        if (videoRef.current && media.hasVideo) {
-          videoRef.current.srcObject = stream
+    // Attached to both the initial socket and every reconnect attempt.
+    // mediaReadyRef distinguishes the two: the first successful open runs
+    // the full getUserMedia/MediaRecorder/AudioWorklet setup below; every
+    // later (re)connect just resumes streaming over the new socket.
+    const attachSocketHandlers = (ws: WebSocket, sid: string) => {
+      ws.onopen = async () => {
+        if (mediaReadyRef.current) {
+          reconnectAttemptsRef.current = 0
+          setErrorMessage("")
+          setStatus("active")
+          return
         }
-
-        playbackCtxRef.current = new AudioContext({ sampleRate: 24000 })
-        if (playbackCtxRef.current.state === "suspended") {
-          await playbackCtxRef.current.resume()
-        }
-        nextPlayAtRef.current = 0
-        audioDestRef.current = playbackCtxRef.current.createMediaStreamDestination()
-
-        const micSource = playbackCtxRef.current.createMediaStreamSource(stream)
-        micSource.connect(audioDestRef.current)
-
-        const mixedStream = new MediaStream([
-          ...stream.getVideoTracks(),
-          ...audioDestRef.current.stream.getAudioTracks(),
-        ])
-
-        const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
-          ? "video/webm;codecs=vp9,opus"
-          : "video/webm"
-        const mr = new MediaRecorder(mixedStream, { mimeType })
-        mediaRecorderRef.current = mr
-        mr.ondataavailable = (e) => {
-          if (e.data.size > 0) chunksRef.current.push(e.data)
-        }
-        mr.onstop = () => {
-          const blob = new Blob(chunksRef.current, { type: "video/webm" })
-          recordedBlobRef.current = blob
-          setHasRecording(true)
-        }
-        mr.start(1000)
-
-        captureCtxRef.current = new AudioContext({ sampleRate: 16000 })
-        if (captureCtxRef.current.state === "suspended") {
-          await captureCtxRef.current.resume()
-        }
-        await captureCtxRef.current.audioWorklet.addModule("/pcm-processor.js")
-        const source = captureCtxRef.current.createMediaStreamSource(stream)
-        workletRef.current = new AudioWorkletNode(captureCtxRef.current, "pcm-processor")
-        workletRef.current.port.onmessage = (e) => {
-          if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(e.data)
-        }
-        source.connect(workletRef.current)
-
-        startTimer()
-        setStatus("active")
-      } catch (err: unknown) {
-        setErrorMessage("Could not start your camera or microphone. Please check permissions and try again.")
-        setStatus("error")
-        ws.close()
-      }
-    }
-
-    ws.onmessage = (event) => {
-      if (event.data instanceof ArrayBuffer) {
-        playPCM(event.data)
-        setShowCheckIn(false)
-      } else {
         try {
-          const msg = JSON.parse(event.data as string)
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true },
+            video: media.hasVideo
+              ? { facingMode: "user", width: { ideal: 1280 } }
+              : false,
+          })
+          streamRef.current = stream
 
-          if (msg.type === "status") {
-            if (typeof msg.maxDurationSecs === "number") {
-              setMaxDurationSecs(msg.maxDurationSecs)
-            }
-            setShowCheckIn(false)
-          } else if (msg.type === "check_in") {
-            setShowCheckIn(true)
-            playCheckInSound()
-          } else if (msg.type === "interrupted") {
-            // User barged in on the agent -- drop any already-queued audio
-            // for the turn that just got cut off instead of talking over them.
-            flushPlayback()
-          } else if (msg.type === "error") {
-            // Server always sends this before closing (auth failure, ownership
-            // mismatch, already-completed, duplicate connection, internal
-            // error, etc.) -- surface its actual message instead of a
-            // generic status.
-            setErrorMessage(msg.message || "An unexpected error occurred.")
-            setStatus("error")
-          } else if (msg.type === "interview_ended") {
-            setShowCheckIn(false)
-            setStatus("ended")
-            endSession(false)
+          if (videoRef.current && media.hasVideo) {
+            videoRef.current.srcObject = stream
           }
-        } catch {
-          // Ignore parse errors
+
+          playbackCtxRef.current = new AudioContext({ sampleRate: 24000 })
+          if (playbackCtxRef.current.state === "suspended") {
+            await playbackCtxRef.current.resume()
+          }
+          nextPlayAtRef.current = 0
+          audioDestRef.current = playbackCtxRef.current.createMediaStreamDestination()
+
+          const micSource = playbackCtxRef.current.createMediaStreamSource(stream)
+          micSource.connect(audioDestRef.current)
+
+          const mixedStream = new MediaStream([
+            ...stream.getVideoTracks(),
+            ...audioDestRef.current.stream.getAudioTracks(),
+          ])
+
+          const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
+            ? "video/webm;codecs=vp9,opus"
+            : "video/webm"
+          const mr = new MediaRecorder(mixedStream, { mimeType })
+          mediaRecorderRef.current = mr
+          mr.ondataavailable = (e) => {
+            if (e.data.size > 0) chunksRef.current.push(e.data)
+          }
+          mr.onstop = () => {
+            const blob = new Blob(chunksRef.current, { type: "video/webm" })
+            recordedBlobRef.current = blob
+            setHasRecording(true)
+          }
+          mr.start(1000)
+
+          captureCtxRef.current = new AudioContext({ sampleRate: 16000 })
+          if (captureCtxRef.current.state === "suspended") {
+            await captureCtxRef.current.resume()
+          }
+          await captureCtxRef.current.audioWorklet.addModule("/pcm-processor.js")
+          const source = captureCtxRef.current.createMediaStreamSource(stream)
+          workletRef.current = new AudioWorkletNode(captureCtxRef.current, "pcm-processor")
+          workletRef.current.port.onmessage = (e) => {
+            if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(e.data)
+          }
+          source.connect(workletRef.current)
+
+          startTimer()
+          mediaReadyRef.current = true
+          setStatus("active")
+        } catch (err: unknown) {
+          setErrorMessage("Could not start your camera or microphone. Please check permissions and try again.")
+          setStatus("error")
+          ws.close()
         }
+      }
+
+      ws.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+          playPCM(event.data)
+          setShowCheckIn(false)
+        } else {
+          try {
+            const msg = JSON.parse(event.data as string)
+
+            if (msg.type === "status") {
+              if (typeof msg.maxDurationSecs === "number") {
+                setMaxDurationSecs(msg.maxDurationSecs)
+              }
+              setShowCheckIn(false)
+            } else if (msg.type === "check_in") {
+              setShowCheckIn(true)
+              playCheckInSound()
+            } else if (msg.type === "interrupted") {
+              // User barged in on the agent -- drop any already-queued audio
+              // for the turn that just got cut off instead of talking over them.
+              flushPlayback()
+            } else if (msg.type === "error") {
+              // Server always sends this before closing (auth failure, ownership
+              // mismatch, already-completed, duplicate connection, internal
+              // error, etc.) -- surface its actual message instead of a
+              // generic status.
+              setErrorMessage(msg.message || "An unexpected error occurred.")
+              setStatus("error")
+            } else if (msg.type === "interview_ended") {
+              setShowCheckIn(false)
+              setStatus("ended")
+              endSession(false)
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      }
+
+      ws.onclose = (event) => {
+        setStatus((s) => {
+          // A specific cause already arrived via the "error" message above --
+          // don't stomp it with a generic one. The message frame always
+          // precedes the close frame, so by the time this fires `s` already
+          // reflects that update.
+          if (s === "ended" || s === "error") {
+            stopTimer()
+            stopCapture()
+            return s
+          }
+          if (s === "active" || s === "connecting" || s === "reconnecting") {
+            // B10: only retry drops that happen after the interview was
+            // actually running (mediaReadyRef) -- a fresh connection that
+            // never opened, or a server-classified terminal error (which
+            // already moved status to "error" above), should not retry.
+            if (mediaReadyRef.current && reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+              const attempt = reconnectAttemptsRef.current + 1
+              reconnectAttemptsRef.current = attempt
+              setErrorMessage(
+                `Connection lost. Reconnecting… (attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS})`,
+              )
+              const delay = RECONNECT_BASE_DELAY_MS * 2 ** (attempt - 1)
+              reconnectTimeoutRef.current = setTimeout(() => {
+                const newWs = createSocket(sid)
+                attachSocketHandlers(newWs, sid)
+              }, delay)
+              return "reconnecting"
+            }
+            stopTimer()
+            stopCapture()
+            setErrorMessage(
+              CLOSE_CODE_MESSAGES[event.code] ||
+                (mediaReadyRef.current
+                  ? "Connection lost and we couldn't reconnect. Please check your network and try again."
+                  : "Connection lost. Please check your network and try again."),
+            )
+            return "error"
+          }
+          return s
+        })
+      }
+
+      ws.onerror = () => {
+        // onclose always follows and carries the close code, which is what we
+        // need to classify the failure -- nothing to add here.
       }
     }
 
-    ws.onclose = (event) => {
-      stopTimer()
-      stopCapture()
-      setStatus((s) => {
-        // A specific cause already arrived via the "error" message above --
-        // don't stomp it with a generic one. The message frame always
-        // precedes the close frame, so by the time this fires `s` already
-        // reflects that update.
-        if (s === "ended" || s === "error") return s
-        if (s === "active" || s === "connecting") {
-          setErrorMessage(
-            CLOSE_CODE_MESSAGES[event.code] ||
-              "Connection lost. Please check your network and try again.",
-          )
-          return "error"
-        }
-        return s
-      })
-    }
-
-    ws.onerror = () => {
-      // onclose always follows and carries the close code, which is what we
-      // need to classify the failure -- nothing to add here.
-    }
-  }, [startTimer, stopTimer, playPCM, flushPlayback, endSession, stopCapture, createSession, checkMediaPermissions, playCheckInSound, setMicDenied, setAudioOnly, setNoCamera])
+    const ws = createSocket(sid)
+    attachSocketHandlers(ws, sid)
+  }, [startTimer, stopTimer, playPCM, flushPlayback, endSession, stopCapture, createSession, createSocket, checkMediaPermissions, playCheckInSound, setMicDenied, setAudioOnly, setNoCamera])
 
   useEffect(() => {
     return () => { endSession(true) }

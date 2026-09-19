@@ -363,6 +363,14 @@ export default function VideoPresentationPage() {
             </Alert>
           )}
 
+          {status === "reconnecting" && errorMessage && (
+            <Alert>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <AlertTitle>Reconnecting</AlertTitle>
+              <AlertDescription>{errorMessage}</AlertDescription>
+            </Alert>
+          )}
+
           {creatingSession && (
             <Alert>
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -402,14 +410,14 @@ export default function VideoPresentationPage() {
                 </div>
               )}
 
-              {status === "active" && (
+              {(status === "active" || status === "reconnecting") && (
                 <div className="absolute left-4 top-4 flex items-center gap-2 rounded-full bg-red-600 px-3 py-1.5">
                   <div className="h-2.5 w-2.5 rounded-full bg-white animate-pulse" />
                   <span className="text-xs font-bold text-white">REC</span>
                 </div>
               )}
 
-              {status === "active" && (
+              {(status === "active" || status === "reconnecting") && (
                 <div className="absolute right-4 top-4 rounded-full bg-black/60 px-4 py-1.5 text-sm font-bold text-white">
                   {mm}:{ss}
                 </div>
@@ -437,12 +445,15 @@ export default function VideoPresentationPage() {
                       ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
                       : status === "connecting"
                         ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
-                        : status === "error"
-                          ? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
-                          : "bg-muted text-muted-foreground"
+                        : status === "reconnecting"
+                          ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300"
+                          : status === "error"
+                            ? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+                            : "bg-muted text-muted-foreground"
                   }`}>
                     {status === "idle" && "Ready to start"}
                     {status === "connecting" && "Connecting…"}
+                    {status === "reconnecting" && "Reconnecting…"}
                     {status === "active" && "Interview in progress"}
                     {status === "ended" && "Interview completed"}
                     {status === "error" && "Connection error"}
@@ -474,7 +485,7 @@ export default function VideoPresentationPage() {
                 </Button>
               )}
 
-              {(status === "active" || status === "connecting") && (
+              {(status === "active" || status === "connecting" || status === "reconnecting") && (
                 <Button
                   variant="outline"
                   size="lg"

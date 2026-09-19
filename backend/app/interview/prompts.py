@@ -1,13 +1,23 @@
+from typing import Optional
+
 from google.genai import types
 
 
-def build_system_instruction(max_duration_seconds: int) -> str:
+def build_system_instruction(
+    max_duration_seconds: int, resume_context: Optional[str] = None
+) -> str:
     """Renders SYSTEM_INSTRUCTION with the Phase 1 pacing target derived from
     settings.max_interview_duration, the same value handler.py enforces as
     the hard session timeout -- keeps the model's stated time budget from
-    drifting out of sync with the actual cutoff."""
+    drifting out of sync with the actual cutoff.
+
+    resume_context (B10): when a dropped connection reconnects, handler.py
+    opens a brand-new Gemini Live session with no memory of the old one --
+    passing a short recap of the transcript-so-far here tells the model to
+    continue naturally instead of restarting the introduction or repeating
+    already-answered questions."""
     phase_1_minutes = max(1, round(max_duration_seconds / 60))
-    return f"""You are a warm, friendly guide helping a university applicant record their video presentation for inVision University.
+    instruction = f"""You are a warm, friendly guide helping a university applicant record their video presentation for inVision University.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PHASE 0 — DISCOVERY (1 minute, 1-2 exchanges, informal)
@@ -71,6 +81,18 @@ You are writing notes for the admissions committee who will make the final decis
 - concerns: any red flags or weak areas
 
 Be honest and objective in your evaluation."""
+
+    if resume_context:
+        instruction += f"""
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RECONNECTION CONTEXT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The applicant's connection just dropped and reconnected. This is a new session with no memory of the conversation below -- do not restart the greeting or Phase 0, and do not re-ask anything already answered here. Briefly acknowledge the interruption, then continue from where this left off.
+
+{resume_context}"""
+
+    return instruction
 
 
 def build_end_session_tool() -> types.Tool:
