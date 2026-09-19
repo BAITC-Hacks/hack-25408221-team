@@ -18,12 +18,38 @@ CHECK_IN_INTERVAL = settings.checkin_silence_interval_seconds
 CHECK_IN_WAIT = settings.checkin_wait_seconds
 MAX_CHECK_INS = settings.max_checkins
 
+# Tracks session_ids with an open live connection. Only safe because the app
+# runs as a single uvicorn worker (see Dockerfile) -- state here is process-wide
+# in-memory, not shared across workers/instances. Checked and updated with no
+# `await` in between, so it's race-free under asyncio's cooperative scheduling.
+_active_connections: set[str] = set()
+
 
 async def run_interview_session(
     websocket: WebSocket, session_id: str, user_id: Optional[str]
 ) -> None:
     logger.info(f"Client connected for session {session_id} (user={user_id})")
 
+    if session_id in _active_connections:
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": "This interview session already has an active connection",
+                }
+            )
+        )
+        await websocket.close(code=4008)
+        return
+
+    _active_connections.add(session_id)
+    try:
+        await _run_interview_session(websocket, session_id)
+    finally:
+        _active_connections.discard(session_id)
+
+
+async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
     if not settings.gemini_api_key:
         await websocket.send_text(
             json.dumps({"type": "error", "message": "GEMINI_API_KEY not set"})

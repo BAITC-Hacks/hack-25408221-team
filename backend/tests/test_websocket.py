@@ -231,3 +231,50 @@ def test_websocket_rejects_connection_to_completed_session(monkeypatch):
                 assert "completed" in error_msg["message"].lower()
     finally:
         app.dependency_overrides.pop(get_session, None)
+
+
+def test_websocket_rejects_second_concurrent_connection_to_same_session(monkeypatch):
+    """B3 regression: before this fix, nothing stopped two concurrent websocket
+    connections (e.g. a duplicate tab, or a reconnect while the old socket was
+    still open) from both driving the same Gemini Live session/transcript for
+    one session_id at once."""
+    provide_session = _make_session_provider()
+    app.dependency_overrides[get_session] = provide_session
+    monkeypatch.setattr(handler, "get_session", provide_session)
+    monkeypatch.setattr(websocket_route, "get_session", provide_session)
+
+    fake_session = FakeLiveSession(responses=[], hang_when_exhausted=True)
+    monkeypatch.setattr(
+        handler, "get_genai_client", lambda: make_fake_genai_client(fake_session)
+    )
+
+    try:
+        with TestClient(app) as client:
+            register_res = client.post(
+                "/api/register",
+                json={
+                    "name": "Applicant",
+                    "email": "duplicate@example.com",
+                    "password": "correct-horse-battery-staple",
+                },
+            )
+            user_id = register_res.json()["userId"]
+            token = register_res.json()["accessToken"]
+
+            create_res = client.post(
+                "/api/sessions",
+                json={"userId": user_id, "program": "Computer Science"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            session_id = create_res.json()["sessionId"]
+
+            with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws1:
+                status_msg = ws1.receive_json()
+                assert status_msg["type"] == "status"
+
+                with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws2:
+                    error_msg = ws2.receive_json()
+                    assert error_msg["type"] == "error"
+                    assert "active connection" in error_msg["message"].lower()
+    finally:
+        app.dependency_overrides.pop(get_session, None)

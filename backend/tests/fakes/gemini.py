@@ -5,6 +5,7 @@ response.tool_call.function_calls, session.send_realtime_input/receive/send_tool
 client.aio.live.connect) so tests can script a conversation without a network call.
 """
 
+import asyncio
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, List, Optional
@@ -75,11 +76,20 @@ def end_session_call(args: dict, call_id: str = "call-1") -> FakeLiveResponse:
 class FakeLiveSession:
     """Records what the app sends and replays a scripted list of responses on receive()."""
 
-    def __init__(self, responses: Optional[List[FakeLiveResponse]] = None):
+    def __init__(
+        self,
+        responses: Optional[List[FakeLiveResponse]] = None,
+        hang_when_exhausted: bool = False,
+    ):
         self._responses = list(responses or [])
         self.sent_audio: List[bytes] = []
         self.tool_responses: List[Any] = []
         self.closed = False
+        # When True, receive() suspends forever (like the real Live API waiting
+        # on the next server message) once the scripted responses run out,
+        # instead of ending the generator. Needed for tests that keep a
+        # connection open without ever calling end_session.
+        self._hang_when_exhausted = hang_when_exhausted
 
     def queue(self, response: FakeLiveResponse) -> None:
         self._responses.append(response)
@@ -90,6 +100,8 @@ class FakeLiveSession:
     async def receive(self):
         for response in self._responses:
             yield response
+        if self._hang_when_exhausted:
+            await asyncio.Event().wait()
 
     async def send_tool_response(self, function_responses):
         self.tool_responses.append(function_responses)

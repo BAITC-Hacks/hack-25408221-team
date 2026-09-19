@@ -185,6 +185,38 @@ PART C of the spec. "Skipped" entries explain why; "Remaining" is filled in at t
     since that only intercepts FastAPI `Depends(...)` resolution, not a plain function call.
 - Test run: **before this task, 6 passed.** **After: 8 passed** (adds the two tests above).
 
+### B3 — One live connection per session
+
+- **Bug found (data-integrity, pre-existing), confirmed by reading the code:** nothing
+  prevented two concurrent websocket connections from opening for the same `session_id` at
+  once — e.g. a duplicate browser tab, or a client reconnecting before its stale connection
+  actually closed. Both connections would independently drive the *same* underlying Gemini
+  Live conversation state machine expectations while appending to two separate in-memory
+  `transcript` lists and racing to call `save_evaluation` for the same session, corrupting
+  whichever one lost the race.
+- **Fix:** `app/interview/handler.py` now tracks in-flight sessions in a module-level
+  `_active_connections: set[str]`. `run_interview_session` is now a thin wrapper: it rejects
+  the connection (close code `4008`, message "This interview session already has an active
+  connection") if `session_id` is already in the set, otherwise adds it and delegates to the
+  renamed `_run_interview_session` (all the original logic, unchanged) inside a `try/finally`
+  that always removes it again on exit. The check-then-add has no `await` between them, so
+  it's race-free under asyncio's single-threaded cooperative scheduling — and the app already
+  only ever runs as a single uvicorn worker (`backend/Dockerfile`: `--workers 1`, with a
+  comment explaining why: in-memory session state can't be shared across worker processes
+  anyway), so a process-local in-memory set is a correct source of truth here, not just a
+  test-only convenience.
+- **New test** `tests/test_websocket.py::test_websocket_rejects_second_concurrent_connection_to_same_session`:
+  opens one websocket connection and, while it's still open (never sends `end_session`, so
+  the interview stays active), opens a second connection to the same `session_id` and asserts
+  it's immediately rejected with the "active connection" error. Needed a small addition to
+  the shared fake, `tests/fakes/gemini.py`'s `FakeLiveSession`: a new `hang_when_exhausted`
+  constructor flag (default `False`, so every existing test's behavior is unchanged) that
+  makes `receive()` suspend forever once its scripted responses run out instead of ending the
+  generator — matching how the real Gemini Live API's `receive()` actually behaves while
+  waiting for the next server message, and letting this test keep a connection "open" on
+  purpose without a real network call.
+- Test run: **before this task, 8 passed.** **After: 9 passed** (adds the test above).
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though
