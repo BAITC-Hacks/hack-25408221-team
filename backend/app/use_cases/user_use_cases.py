@@ -23,6 +23,7 @@ def _to_session_response(session: Session) -> SessionResponse:
         evaluation=session.evaluation,
         started_at=session.started_at,
         completed_at=session.completed_at,
+        status=session.status,
         created_at=session.created_at,
     )
 

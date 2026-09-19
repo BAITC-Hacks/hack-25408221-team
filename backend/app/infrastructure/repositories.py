@@ -35,6 +35,7 @@ def _to_session(db_session: SessionTable) -> Session:
         evaluation=db_session.evaluation,
         started_at=db_session.started_at,
         completed_at=db_session.completed_at,
+        status=db_session.status,
         created_at=db_session.created_at,
     )
 
@@ -203,6 +204,20 @@ class SessionRepository(SessionRepositoryInterface):
         if not db_session:
             raise ValueError(f"Session {session_id} not found")
         db_session.completed_at = datetime.utcnow()
+        db_session.status = "completed"
+        self.session.add(db_session)
+        await self.session.commit()
+        await self.session.refresh(db_session)
+        return _to_session(db_session)
+
+    async def mark_incomplete(self, session_id: str) -> Session:
+        result = await self.session.execute(
+            select(SessionTable).where(SessionTable.id == session_id)
+        )
+        db_session = result.scalars().first()
+        if not db_session:
+            raise ValueError(f"Session {session_id} not found")
+        db_session.status = "incomplete"
         self.session.add(db_session)
         await self.session.commit()
         await self.session.refresh(db_session)

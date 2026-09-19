@@ -165,6 +165,20 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
         except Exception as e:
             logger.error(f"Failed to save evaluation: {e}", exc_info=True)
 
+    async def mark_incomplete():
+        try:
+            async for db_session in get_session():
+                repo = SessionRepository(db_session)
+                await repo.update_transcript(session_id, transcript)
+                await repo.mark_incomplete(session_id)
+                logger.info(
+                    f"Marked session {session_id} incomplete "
+                    f"({len(transcript)} transcript entries)"
+                )
+                break
+        except Exception as e:
+            logger.error(f"Failed to mark session incomplete: {e}", exc_info=True)
+
     try:
         async with client.aio.live.connect(
             model=settings.model, config=config
@@ -298,21 +312,8 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
             session_ended_event.set()
             finalize_current_turn()
 
-            if not evaluation_saved and transcript and len(transcript) > 0:
-                await save_evaluation(
-                    {
-                        "applicant_notes": {
-                            "session_completed": True,
-                            "note": "Session ended without AI evaluation",
-                        },
-                        "overall_impression": "Interview completed but automatic evaluation was not triggered.",
-                        "recommendation": "needs_review",
-                        "strengths": [],
-                        "concerns": [
-                            "AI did not call end_session function - manual review required"
-                        ],
-                    }
-                )
+            if not evaluation_saved:
+                await mark_incomplete()
 
             silence_task.cancel()
             for task in pending:
@@ -324,8 +325,14 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected before session opened")
+        finalize_current_turn()
+        if not evaluation_saved:
+            await mark_incomplete()
     except Exception as e:
         logger.error(f"Session error: {e}", exc_info=True)
+        finalize_current_turn()
+        if not evaluation_saved:
+            await mark_incomplete()
         try:
             await websocket.send_text(
                 json.dumps({"type": "error", "message": "An internal error occurred"})

@@ -8,6 +8,8 @@ event loops and blow up, so this test builds its own engine and never touches
 those fixtures.
 """
 
+import time
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -20,6 +22,38 @@ from app.config import settings
 from app.infrastructure.database import get_session
 from app.main import app
 from tests.fakes.gemini import FakeLiveSession, end_session_call, make_fake_genai_client, user_transcript
+
+
+def _register_and_create_session(client, email):
+    register_res = client.post(
+        "/api/register",
+        json={
+            "name": "Applicant",
+            "email": email,
+            "password": "correct-horse-battery-staple",
+        },
+    )
+    user_id = register_res.json()["userId"]
+    token = register_res.json()["accessToken"]
+
+    create_res = client.post(
+        "/api/sessions",
+        json={"userId": user_id, "program": "Computer Science"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    session_id = create_res.json()["sessionId"]
+    return session_id, token
+
+
+def _admin_token(client, secret, email):
+    client.post(
+        "/api/admin/create-admin",
+        json={"email": email, "password": "admin-password", "secret": secret},
+    )
+    admin_login = client.post(
+        "/api/login", json={"email": email, "password": "admin-password"}
+    )
+    return admin_login.json()["accessToken"]
 
 
 def _make_session_provider():
@@ -353,5 +387,108 @@ def test_websocket_rejects_second_concurrent_connection_to_same_session(monkeypa
                     error_msg = ws2.receive_json()
                     assert error_msg["type"] == "error"
                     assert "active connection" in error_msg["message"].lower()
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
+def _poll_session_status(client, session_id, admin_token, attempts=40, interval=0.05):
+    """Starlette's TestClient forcibly cancels the server-side task shortly
+    after the `with websocket_connect(...)` block exits, with no guarantee
+    the app's own disconnect-triggered cleanup has finished first. Polling
+    the session (from inside the `with` block, before it exits) lets that
+    cleanup actually complete instead of getting cancelled mid-write."""
+    body = None
+    for _ in range(attempts):
+        session_res = client.get(
+            f"/api/admin/sessions/{session_id}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert session_res.status_code == 200
+        body = session_res.json()
+        if body["status"] != "in_progress":
+            return body
+        time.sleep(interval)
+    return body
+
+
+def test_websocket_disconnect_before_any_speech_marks_session_incomplete(monkeypatch):
+    """B6 regression: before this fix, a disconnect before the applicant said
+    anything (empty transcript) left the session silently `in_progress`
+    forever -- no status, no signal an interview was even attempted."""
+    provide_session = _make_session_provider()
+    app.dependency_overrides[get_session] = provide_session
+    monkeypatch.setattr(handler, "get_session", provide_session)
+    monkeypatch.setattr(websocket_route, "get_session", provide_session)
+    monkeypatch.setattr(settings, "admin_creation_secret", "test-admin-secret")
+
+    fake_session = FakeLiveSession(responses=[], hang_when_exhausted=True)
+    monkeypatch.setattr(
+        handler, "get_genai_client", lambda: make_fake_genai_client(fake_session)
+    )
+
+    try:
+        with TestClient(app) as client:
+            session_id, token = _register_and_create_session(
+                client, "no-speech@example.com"
+            )
+            admin_token = _admin_token(
+                client, "test-admin-secret", "no-speech-admin@example.com"
+            )
+
+            with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws:
+                status_msg = ws.receive_json()
+                assert status_msg["type"] == "status"
+
+                ws.close(1000)
+                body = _poll_session_status(client, session_id, admin_token)
+
+            assert body["status"] == "incomplete"
+            assert body["completed_at"] is None
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
+def test_websocket_disconnect_mid_interview_marks_session_incomplete_with_partial_transcript(
+    monkeypatch,
+):
+    """B6 regression: a disconnect after some speech but before `end_session`
+    was called must still persist whatever transcript exists, tagged
+    `status: incomplete` -- not silently dropped and not reported as a
+    successful completion."""
+    provide_session = _make_session_provider()
+    app.dependency_overrides[get_session] = provide_session
+    monkeypatch.setattr(handler, "get_session", provide_session)
+    monkeypatch.setattr(websocket_route, "get_session", provide_session)
+    monkeypatch.setattr(settings, "admin_creation_secret", "test-admin-secret")
+
+    fake_session = FakeLiveSession(
+        responses=[user_transcript("Hello, I have to go.")],
+        hang_when_exhausted=True,
+    )
+    monkeypatch.setattr(
+        handler, "get_genai_client", lambda: make_fake_genai_client(fake_session)
+    )
+
+    try:
+        with TestClient(app) as client:
+            session_id, token = _register_and_create_session(
+                client, "mid-interview@example.com"
+            )
+            admin_token = _admin_token(
+                client, "test-admin-secret", "mid-interview-admin@example.com"
+            )
+
+            with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws:
+                status_msg = ws.receive_json()
+                assert status_msg["type"] == "status"
+
+                ws.close(1000)
+                body = _poll_session_status(client, session_id, admin_token)
+
+            assert body["status"] == "incomplete"
+            assert body["completed_at"] is None
+            user_entries = [e for e in body["transcript"] if e["role"] == "user"]
+            assert len(user_entries) == 1
+            assert user_entries[0]["text"] == "Hello, I have to go."
     finally:
         app.dependency_overrides.pop(get_session, None)

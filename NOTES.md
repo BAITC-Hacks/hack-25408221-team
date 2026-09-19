@@ -246,6 +246,59 @@ PART C of the spec. "Skipped" entries explain why; "Remaining" is filled in at t
   pre-existing tests were unaffected since none of them scripted more than one fragment per
   role, so coalescing had nothing to change in their assertions).
 
+### B6 — Reliable end-of-interview + fallback save on all exit paths
+
+- **Bug found (data-integrity, pre-existing), confirmed by reading the code:** the only signal
+  that an interview had finished was `completed_at` (nullable). Every non-`end_session` exit
+  path — a disconnect before the applicant said anything, a disconnect mid-interview, the
+  presentation-time-limit timeout, or an unhandled exception — left `completed_at` untouched
+  and simply logged a message. There was no persisted signal that an interview had even been
+  attempted; a session that never got an `end_session` tool call stayed indistinguishable from
+  one nobody ever opened. The one existing fallback (`if not evaluation_saved and transcript:
+  save_evaluation({...fabricated "needs_review" evaluation...})`) only fired when the
+  transcript was non-empty, so an empty-transcript disconnect (the single most common case —
+  someone opens the tab and immediately closes it) persisted nothing at all. Fabricating a fake
+  AI evaluation dict to represent "this needs human review" was also a data-quality smell in
+  its own right, conflating "the AI evaluated this" with "nobody evaluated this."
+- **Fix:** added a real `status` field (`"in_progress" | "completed" | "incomplete"`) to
+  `Session`/`SessionResponse`/`SessionTable`, backed by a new Alembic migration
+  (`08842b9483e2_add_status_to_sessions`, new head, revises `6a5febe4cf83`) that adds the
+  column with `server_default="in_progress"` and backfills `status='completed'` for any row
+  that already has `completed_at` set. `SessionRepository.complete()` now also sets
+  `status = "completed"`; a new `SessionRepository.mark_incomplete()` sets
+  `status = "incomplete"` without touching `completed_at`. `app/interview/handler.py` replaced
+  the fabricated-evaluation fallback with a `mark_incomplete()` closure (persists whatever
+  transcript exists, then marks the session incomplete) called from every non-success exit:
+  the main flow when `asyncio.wait()` resolves without `end_session` having run (covers both
+  disconnect and the time-limit timeout), and both outer exception handlers (`WebSocketDisconnect`
+  raised before the Gemini session even opens, and the generic `Exception` handler) — neither of
+  which previously did any DB work at all on their way out. This satisfies the Definition of
+  Done's "disconnect mid-interview always leaves a saved transcript with status `incomplete`,"
+  including the previously-unhandled empty-transcript case.
+- **New tests** in `tests/test_websocket.py`:
+  - `test_websocket_disconnect_before_any_speech_marks_session_incomplete`
+  - `test_websocket_disconnect_mid_interview_marks_session_incomplete_with_partial_transcript`
+  - Both needed a test-harness-specific workaround, not a handler.py change: Starlette's
+    `TestClient.websocket_connect(...)` context manager, on `__exit__`, sends the disconnect
+    message and then unconditionally cancels the server-side task's cancel scope
+    (`WebSocketTestSession._run`'s task group calls `tg.cancel_scope.cancel()` as soon as
+    `should_close` fires, with no wait for the app's own disconnect-handling coroutine to
+    finish first). Against this app's shared in-memory aiosqlite `StaticPool` connection, that
+    forced cancellation landed mid-transaction inside `mark_incomplete()`'s DB write, and
+    aiosqlite's cancellation-driven `terminate_force_close()` isn't implemented for this DBAPI
+    shim (`NotImplementedError`), which killed the single shared `:memory:` connection and broke
+    every later query in that test (`no such table: users`). Confirmed this doesn't reproduce
+    in production: real uvicorn just delivers a `websocket.disconnect` ASGI event and lets the
+    handler's own exception path run to completion normally — nothing external cancels it. The
+    fix is entirely test-side: call `ws.close(1000)` manually *inside* the `with
+    websocket_connect(...)` block to trigger the disconnect, then poll
+    `GET /api/admin/sessions/{id}` (still inside the block) until `status` leaves
+    `"in_progress"`, so the app's cleanup coroutine finishes on its own *before* the block exits
+    and the harness's cancellation becomes a no-op against an already-finished task.
+- Test run: **before this task, 10 passed.** **After: 12 passed** (adds the two tests above;
+  confirmed the pre-existing 10 pass unchanged after the schema/repository additions before
+  writing the new handler.py logic, satisfying "run the test suite before and after").
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though

@@ -46,6 +46,7 @@ class Session(BaseModel):
     evaluation: Optional[Dict[str, Any]] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    status: str = "in_progress"
     created_at: datetime
 
 
@@ -64,6 +65,7 @@ class SessionResponse(BaseModel):
     evaluation: Optional[Dict[str, Any]] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    status: str = "in_progress"
     created_at: datetime
 
 

@@ -33,4 +33,5 @@ class SessionTable(SQLModel, table=True):
     evaluation: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    status: str = Field(default="in_progress")
     created_at: datetime = Field(default_factory=_utc_now)

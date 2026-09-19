@@ -60,3 +60,7 @@ class SessionRepositoryInterface(ABC):
     @abstractmethod
     async def complete(self, session_id: str) -> Session:
         pass
+
+    @abstractmethod
+    async def mark_incomplete(self, session_id: str) -> Session:
+        pass
