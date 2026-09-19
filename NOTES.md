@@ -105,6 +105,49 @@ PART C of the spec. "Skipped" entries explain why; "Remaining" is filled in at t
   `ADMIN_CREATION_SECRET=""` disables the admin-creation endpoint.
 - Test run: **before this task, 4 passed.** **After: 5 passed** (adds `test_config.py`).
 
+### A4 — Split `websocket.py` into `app/interview/`
+
+- **Refactor, no behavior change.** `backend/app/api/websocket.py` was a 477-line monolith
+  mixing the route/auth boundary with the entire live-call orchestration (prompt text, Gemini
+  client/config construction, silence monitor, transcript building, evaluation save, the
+  forward-to/from-Gemini loops). Per the spec constraint ("do not redesign the interview
+  questions or prompt"), every line of logic moved verbatim — no wording, schema, or control
+  flow changed.
+  - `app/interview/prompts.py`: `SYSTEM_INSTRUCTION` (byte-for-byte identical) and
+    `build_end_session_tool()` (the `end_session` function-calling schema).
+  - `app/interview/gemini_client.py`: `get_genai_client()` and `build_live_connect_config()` —
+    also the seam future tests use to inject a fake Gemini client without a real network call.
+  - `app/interview/handler.py`: `run_interview_session(websocket, session_id, user_id)`, the
+    full session loop (silence monitor, `save_evaluation`, `forward_to_gemini`,
+    `forward_from_gemini`, the outer `asyncio.wait`/cleanup/exception handling) — unchanged
+    logic, just relocated.
+  - `app/api/websocket.py` is now a thin route: accepts the socket, checks the `token` query
+    param, decodes it, and delegates to `run_interview_session`. Satisfies the Definition-of-
+    Done bullet "websocket.py becomes a thin route."
+- **New test** `tests/test_websocket.py`: the first test to exercise the real `/ws/{session_id}`
+  route end-to-end (previously `test_smoke.py`'s Gemini test only drove the fake fixture
+  directly, never through the app). Uses `fastapi.testclient.TestClient` — not the async
+  `httpx.AsyncClient` fixture from `conftest.py` — so register, create-session,
+  open-websocket, and the post-hoc admin read all run through one event loop/thread. Mixing
+  `TestClient`'s internal anyio portal with the aiosqlite connections from the async `client`/
+  `test_engine` fixtures would bind those connections to two different event loops and error;
+  this test builds and tears down its own aiosqlite engine instead. It monkeypatches
+  `app.interview.handler.get_genai_client` and `app.interview.handler.get_session` (patched
+  where they're *used*, since `handler.py` imports both names directly rather than going
+  through FastAPI `Depends` — `app.dependency_overrides` alone doesn't reach those calls) to
+  inject the scripted fake Gemini session and the test's own DB session provider. Scripts one
+  user transcript fragment followed by an `end_session` tool call, then asserts over the
+  websocket (`status` then `interview_ended`) and via `GET /api/admin/sessions/{id}` that the
+  transcript, `applicant_data`, `evaluation`, and `completed_at` were actually persisted.
+  - Note: an earlier draft of this test asserted `fake_session.closed is True` right after
+    reading the `interview_ended` message. That's racy — `interview_ended` is sent *before*
+    the `async with client.aio.live.connect(...)` block's `__aexit__` runs, so the assertion
+    could fire before the server task finishes closing. Dropped it; the DB assertions aren't
+    racy since `save_evaluation` is fully awaited before `interview_ended` is sent.
+- Test run: **before this task, 5 passed.** **After: 6 passed** (adds `test_websocket.py`;
+  confirmed the existing 5 pass unchanged with the new package layout before writing the new
+  test, satisfying "run the test suite before and after").
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though
