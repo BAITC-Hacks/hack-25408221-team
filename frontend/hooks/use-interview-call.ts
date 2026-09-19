@@ -38,6 +38,7 @@ export function useInterviewCall(userId: string | null) {
   const workletRef = useRef<AudioWorkletNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const nextPlayAtRef = useRef(0)
+  const scheduledSourcesRef = useRef<AudioBufferSourceNode[]>([])
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -92,9 +93,25 @@ export function useInterviewCall(userId: string | null) {
     }
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
+    // Closing playbackCtxRef does not stop this node's own output track --
+    // it can stay "live" and keep the recording's audio track open.
+    audioDestRef.current?.stream.getTracks().forEach((t) => t.stop())
     playbackCtxRef.current?.close()
     playbackCtxRef.current = null
     audioDestRef.current = null
+    scheduledSourcesRef.current = []
+  }, [])
+
+  const flushPlayback = useCallback(() => {
+    scheduledSourcesRef.current.forEach((src) => {
+      try {
+        src.stop()
+      } catch {
+        // Already stopped/finished
+      }
+    })
+    scheduledSourcesRef.current = []
+    nextPlayAtRef.current = playbackCtxRef.current?.currentTime ?? 0
   }, [])
 
   const playPCM = useCallback((arrayBuffer: ArrayBuffer) => {
@@ -103,6 +120,11 @@ export function useInterviewCall(userId: string | null) {
       ctx = new AudioContext({ sampleRate: 24000 })
       playbackCtxRef.current = ctx
       nextPlayAtRef.current = 0
+    }
+    if (ctx.state === "suspended") {
+      // Safari/iOS can hand back a suspended context; without resuming here
+      // the scheduled audio below is silently dropped.
+      ctx.resume()
     }
     const int16 = new Int16Array(arrayBuffer)
     if (!int16.length) return
@@ -116,6 +138,10 @@ export function useInterviewCall(userId: string | null) {
     if (audioDestRef.current) {
       src.connect(audioDestRef.current)
     }
+    src.onended = () => {
+      scheduledSourcesRef.current = scheduledSourcesRef.current.filter((s) => s !== src)
+    }
+    scheduledSourcesRef.current.push(src)
     const t = Math.max(ctx.currentTime, nextPlayAtRef.current)
     src.start(t)
     nextPlayAtRef.current = t + buf.duration
@@ -133,6 +159,9 @@ export function useInterviewCall(userId: string | null) {
       osc.start()
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5)
       osc.stop(ctx.currentTime + 0.5)
+      osc.onended = () => {
+        ctx.close()
+      }
     } catch {
       // Audio not available
     }
@@ -251,6 +280,9 @@ export function useInterviewCall(userId: string | null) {
         }
 
         playbackCtxRef.current = new AudioContext({ sampleRate: 24000 })
+        if (playbackCtxRef.current.state === "suspended") {
+          await playbackCtxRef.current.resume()
+        }
         nextPlayAtRef.current = 0
         audioDestRef.current = playbackCtxRef.current.createMediaStreamDestination()
 
@@ -278,6 +310,9 @@ export function useInterviewCall(userId: string | null) {
         mr.start(1000)
 
         captureCtxRef.current = new AudioContext({ sampleRate: 16000 })
+        if (captureCtxRef.current.state === "suspended") {
+          await captureCtxRef.current.resume()
+        }
         await captureCtxRef.current.audioWorklet.addModule("/pcm-processor.js")
         const source = captureCtxRef.current.createMediaStreamSource(stream)
         workletRef.current = new AudioWorkletNode(captureCtxRef.current, "pcm-processor")
@@ -311,6 +346,10 @@ export function useInterviewCall(userId: string | null) {
           } else if (msg.type === "check_in") {
             setShowCheckIn(true)
             playCheckInSound()
+          } else if (msg.type === "interrupted") {
+            // User barged in on the agent -- drop any already-queued audio
+            // for the turn that just got cut off instead of talking over them.
+            flushPlayback()
           } else if (msg.type === "error") {
             setStatus("error")
           } else if (msg.type === "interview_ended") {
@@ -333,7 +372,7 @@ export function useInterviewCall(userId: string | null) {
     ws.onerror = () => {
       setStatus("error")
     }
-  }, [startTimer, stopTimer, playPCM, endSession, stopCapture, createSession, checkMediaPermissions, playCheckInSound, setMicDenied, setAudioOnly, setNoCamera])
+  }, [startTimer, stopTimer, playPCM, flushPlayback, endSession, stopCapture, createSession, checkMediaPermissions, playCheckInSound, setMicDenied, setAudioOnly, setNoCamera])
 
   useEffect(() => {
     return () => { endSession(true) }

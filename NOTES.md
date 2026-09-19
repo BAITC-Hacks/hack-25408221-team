@@ -505,6 +505,86 @@ PART C of the spec. "Skipped" entries explain why; "Remaining" is filled in at t
   the seams (e.g. an injectable audio-pipeline interface) that would make these actually
   testable in CI. Splitting into hooks now is what makes that seam possible later.
 
+### B9 — Audio pipeline hardening
+
+Task description covered five things; confirmed each by reading the code before touching
+anything, per the sprint's "confirm before fixing" rule.
+
+1. **Worklet posts every render quantum (~8ms), not batched.** `frontend/public/pcm-processor.js`
+   called `port.postMessage` unconditionally inside `process()`, which the Web Audio spec fires
+   once per 128-sample render quantum — at 16kHz that's a websocket-bound message every ~8ms
+   instead of a reasonable ~20-40ms batch.
+   - **Fix:** accumulate incoming render quanta into an internal buffer and only post once
+     `bufferedLength` reaches 512 samples (32ms @ 16kHz), merging the buffered `Float32Array`
+     chunks before the existing Int16 conversion. Wire format to the backend is unchanged (still
+     raw concatenated Int16 PCM bytes) — only the chunking cadence changed.
+2. **No `AudioContext.resume()` anywhere.** `grep -rn "resume(" hooks/ app/ public/` returned zero
+   matches. Both `captureCtxRef` (16kHz) and `playbackCtxRef` (24kHz) are constructed inside
+   async callbacks (`ws.onopen`, and `playPCM`'s lazy-recreate fallback) with no resume/state
+   check — Safari/iOS can hand back a context in `"suspended"` state when construction happens
+   without a sufficiently fresh user gesture, silently dropping all subsequent audio.
+   - **Fix:** added `if (ctx.state === "suspended") await ctx.resume()` right after constructing
+     both contexts in `ws.onopen`, and the same synchronous check (best-effort, not awaited,
+     since `playPCM` isn't async) in `playPCM`'s lazy-recreate branch.
+3. **`stopCapture()` never stopped the recording-mix destination track.** It stopped
+   `streamRef.current`'s tracks and closed `playbackCtxRef`, but per Web Audio spec, closing an
+   `AudioContext` does not stop a `MediaStreamAudioDestinationNode`'s own output track — the
+   track feeding `MediaRecorder` via `mixedStream` could stay `"live"` after cleanup.
+   - **Fix:** `stopCapture()` now explicitly stops `audioDestRef.current.stream`'s tracks before
+     nulling `audioDestRef` and closing `playbackCtxRef`. (The "reuse one getUserMedia stream"
+     half of this item was already satisfied — one real capture call in `ws.onopen`, reused for
+     video/mic/mix; the two probe-only calls in `use-media-permissions.ts` are a separate,
+     pre-existing, already-documented quirk from A7, not a leak since they stop their tracks
+     immediately — left alone.)
+4. **Playback queue burst-catch-up:** read `playPCM`'s scheduling math
+   (`Math.max(ctx.currentTime, nextPlayAtRef.current)`) and confirmed it already handles both
+   burst arrival and falling behind correctly — **no bug, no fix needed.**
+   **Barge-in flush via server `interrupted` signal:** confirmed via
+   `grep -n "interrupted" backend/app/interview/handler.py` that the backend read
+   `input_transcription`/`output_transcription`/`turn_complete`/`model_turn` off
+   `server_content` but never `sc.interrupted` — the field Gemini sets when a user's barge-in
+   cuts the agent's turn short. The frontend had no message type to flush already-queued
+   playback audio either, so a barge-in would talk over the user with stale audio.
+   - **Fix (backend):** `backend/app/interview/handler.py`, `forward_from_gemini()` — added
+     `if sc.interrupted: await websocket.send_text(json.dumps({"type": "interrupted"}))` as the
+     first check inside the existing `if response.server_content:` block.
+   - **Fix (frontend):** `use-interview-call.ts` now tracks every scheduled
+     `AudioBufferSourceNode` in `scheduledSourcesRef` (pushed in `playPCM`, removed via
+     `onended`). A new `flushPlayback()` stops every currently-tracked source and resets
+     `nextPlayAtRef` to the context's current time. `ws.onmessage` calls it on
+     `msg.type === "interrupted"`. `stopCapture()` also clears the ref on session end.
+5. **Agent audio mixed into the recording destination:** read the wiring — `playPCM` connects
+   each scheduled source to both `ctx.destination` (speakers) and `audioDestRef.current`
+   (recording mix), and `micSource` is connected to the same `audioDestRef` in `ws.onopen` — both
+   sides of the conversation correctly reach the recorded track. **Confirmed correct, no fix.**
+   Noted one narrow, low-value edge case and left it alone: if `playPCM` fires for a
+   message that arrives in the brief window after `stopCapture()` has already nulled
+   `audioDestRef`, that chunk still plays to speakers but is skipped from the recording mix
+   (`if (audioDestRef.current)` guard) — narrow race, at most a fraction of a second of trailing
+   agent audio, not worth the synchronization complexity to close.
+
+Also fixed, same theme (AudioContext hardening) though not explicitly one of the five bullets:
+**`playCheckInSound()`** created a `new AudioContext()` on every check-in beep and never closed
+it. Bounded by `MAX_CHECK_INS` (small) so not a severe leak, but a real one and a one-line fix —
+added `osc.onended = () => ctx.close()`.
+
+- **Verification:**
+  - Backend: added `test_websocket_forwards_interrupted_signal_to_client` in
+    `backend/tests/test_websocket.py`, scripting a `FakeServerContent(interrupted=True)` response
+    (the fake already had this field defined, unused, before this fix) and asserting the client
+    receives `{"type": "interrupted"}`. Verified it's a real regression test: temporarily replaced
+    the working `handler.py` with the pre-fix version from `HEAD` (`git show HEAD:... >
+    handler.py`), reran — failed; restored the fix — passed. Full suite: **19 passed** (18 before
+    + this 1 new test), confirming no regressions in the existing 18.
+  - Frontend: `npx tsc --noEmit` — identical output to A7's baseline (same 2 pre-existing,
+    unrelated errors in `app/admin/applicant/[id]/page.tsx` and `app/apply/form/page.tsx`; zero
+    new errors). `npx next build` — compiles, same route shapes as before.
+  - No new frontend unit tests: every fix here (worklet buffering, `AudioContext.resume()`,
+    track cleanup, `AudioBufferSourceNode` scheduling/flush) is pure browser-API sequencing with
+    no extractable business logic and no test runner in this repo (per the sprint's own
+    carve-out: "for frontend, a unit test of the extracted logic, since browser audio cannot be
+    tested in CI" — there is no pure logic here to extract, unlike the backend half of the fix).
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though

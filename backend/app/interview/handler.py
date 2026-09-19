@@ -332,6 +332,14 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
                             if response.server_content:
                                 sc = response.server_content
 
+                                if sc.interrupted:
+                                    # User's barge-in cut the agent off mid-turn --
+                                    # tell the client to flush audio already queued
+                                    # for playback, or it plays on top of the user.
+                                    await websocket.send_text(
+                                        json.dumps({"type": "interrupted"})
+                                    )
+
                                 if (
                                     sc.input_transcription
                                     and sc.input_transcription.text

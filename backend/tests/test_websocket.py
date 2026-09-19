@@ -371,6 +371,41 @@ def test_websocket_coalesces_streamed_transcription_fragments_into_one_turn(monk
         app.dependency_overrides.pop(get_session, None)
 
 
+def test_websocket_forwards_interrupted_signal_to_client(monkeypatch):
+    """B9 regression: Gemini sets server_content.interrupted when the user's
+    barge-in cuts the agent's turn short. Before this fix, the handler read
+    input/output transcription, turn_complete, and model_turn off the same
+    server_content but never looked at interrupted, so the client had no way
+    to know it should stop playing back the audio already queued for the
+    turn that just got cut off."""
+    provide_session = _make_session_provider()
+    app.dependency_overrides[get_session] = provide_session
+    monkeypatch.setattr(handler, "get_session", provide_session)
+    monkeypatch.setattr(websocket_route, "get_session", provide_session)
+
+    fake_session = FakeLiveSession(
+        responses=[
+            FakeLiveResponse(server_content=FakeServerContent(interrupted=True)),
+            end_session_call({"applicant_notes": {}, "overall_impression": "x", "recommendation": "recommended"}),
+        ]
+    )
+    monkeypatch.setattr(
+        handler, "get_genai_client", lambda: make_fake_genai_client(fake_session)
+    )
+
+    try:
+        with TestClient(app) as client:
+            session_id, token = _register_and_create_session(client, "barge-in@example.com")
+
+            with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws:
+                ws.receive_json()  # "status": connected
+                interrupted_msg = ws.receive_json()
+                assert interrupted_msg == {"type": "interrupted"}
+                ws.receive_json()  # "interview_ended"
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
 def test_websocket_rejects_second_concurrent_connection_to_same_session(monkeypatch):
     """B3 regression: before this fix, nothing stopped two concurrent websocket
     connections (e.g. a duplicate tab, or a reconnect while the old socket was
