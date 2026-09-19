@@ -2,7 +2,7 @@ from google import genai
 from google.genai import types
 
 from app.config import settings
-from app.interview.prompts import SYSTEM_INSTRUCTION, build_end_session_tool
+from app.interview.prompts import build_end_session_tool, build_system_instruction
 
 
 def get_genai_client():
@@ -19,7 +19,7 @@ def build_live_connect_config() -> types.LiveConnectConfig:
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Aoede")
             )
         ),
-        system_instruction=SYSTEM_INSTRUCTION,
+        system_instruction=build_system_instruction(settings.max_interview_duration),
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
         realtime_input_config=types.RealtimeInputConfig(

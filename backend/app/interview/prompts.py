@@ -1,6 +1,13 @@
 from google.genai import types
 
-SYSTEM_INSTRUCTION = """You are a warm, friendly guide helping a university applicant record their video presentation for inVision University.
+
+def build_system_instruction(max_duration_seconds: int) -> str:
+    """Renders SYSTEM_INSTRUCTION with the Phase 1 pacing target derived from
+    settings.max_interview_duration, the same value handler.py enforces as
+    the hard session timeout -- keeps the model's stated time budget from
+    drifting out of sync with the actual cutoff."""
+    phase_1_minutes = max(1, round(max_duration_seconds / 60))
+    return f"""You are a warm, friendly guide helping a university applicant record their video presentation for inVision University.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PHASE 0 — DISCOVERY (1 minute, 1-2 exchanges, informal)
@@ -16,7 +23,7 @@ DISCOVERY RULES:
 - Use what you learned to make Phase 1 feel personal.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PHASE 1 — FORMAL PRESENTATION (5-6 minutes, 6 questions)
+PHASE 1 — FORMAL PRESENTATION (~{phase_1_minutes} minutes total, 6 questions)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Guide the applicant through these 6 questions in order:
 

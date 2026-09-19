@@ -750,6 +750,53 @@ tool call behind flag. Timer color thresholds derived from configured max durati
   - Explicitly NOT done this sprint (see finding 2): the actual server-sent `{type: "progress",
     question: N}` message and its backing Gemini tool call, because it requires a prompt change.
 
+### B13: Single source of truth for interview duration
+
+Confirmed by reading the code, then fixed. Task description: "One setting for duration injected
+into prompt and client via initial config message; remove hardcoded 270s/5-6min drift." Unlike
+B12's new tool call, this task is a value substitution — an existing hardcoded number already in
+the prompt gets replaced by the configured one — not new model behavior, so it does not fall under
+"do not redesign the prompt."
+
+1. **Prompt text drift (backend, the literal "5-6 minutes" this task names).**
+   `app/interview/prompts.py`'s `SYSTEM_INSTRUCTION` had `PHASE 1 — FORMAL PRESENTATION (5-6
+   minutes, 6 questions)` as a static string, while the actual hard cutoff enforced by
+   `handler.py`'s `asyncio.wait_for(..., timeout=settings.max_interview_duration)` is 300s = 5
+   minutes. A model pacing itself to "5-6 minutes" against a 5-minute hard stop is exactly the kind
+   of drift this task calls out. Turned `SYSTEM_INSTRUCTION` into `build_system_instruction(
+   max_duration_seconds)`, which renders `(~{N} minutes total, 6 questions)` from
+   `settings.max_interview_duration`. `gemini_client.py`'s `build_live_connect_config()` now calls
+   `build_system_instruction(settings.max_interview_duration)` instead of importing the static
+   string. No other file imported `SYSTEM_INSTRUCTION` (grepped to confirm).
+2. **Client duration source (backend + frontend, "injected into client via initial config
+   message").** B12 already added `maxDurationSecs` to the one-time `POST /api/sessions` HTTP
+   response. That's fine for the initial load but doesn't help a future reconnect (B10, still
+   pending) which won't re-run session creation. Added the same value to the WebSocket's initial
+   `"status"` message (`handler.py`, the "Connected!..." message sent right after the Gemini Live
+   session opens) — the channel the task description actually points at. `use-interview-call.ts`'s
+   `"status"` branch now also reads `msg.maxDurationSecs` and updates the same state B12 introduced.
+   Both delivery paths read from the one config value (`settings.max_interview_duration`), so
+   there's nothing to drift between them.
+3. **Remaining hardcoded "~5 minutes" copy (frontend).** Grepped for other occurrences of this
+   number: `app/apply/interview/page.tsx`'s subheading ("The interview takes approximately 5
+   minutes") had the same hook state (`maxDurationSecs`) available already, so made it
+   `Math.round(maxDurationSecs / 60)` — same wording, no longer a magic number.
+   `components/form-tabs/ai-interview.tsx` has the same sentence but is rendered *before* any
+   session exists (the pre-application tab), with no session/websocket to source a duration from —
+   adding a config-fetch endpoint just for this one marketing line is out of scope for "single
+   source of truth for interview *duration*" (it's about eliminating drift between the enforced
+   duration and what the model/timer are told, not about wiring config into every page that
+   mentions "5 minutes"). Left as-is; noted here rather than silently skipped.
+
+- **Verification:**
+  - Backend: added `tests/test_prompts.py` (asserts `build_system_instruction(300)` renders "~5
+    minutes total" and not the old "5-6 minutes" string; asserts it recomputes for a different
+    duration) and `test_websocket.py::test_websocket_initial_status_message_carries_configured_max_duration`
+    (asserts the live "status" message's `maxDurationSecs` equals `settings.max_interview_duration`).
+    Full suite before and after: **26 passed** (24 + 2 new), no regressions.
+  - Frontend: `npx tsc --noEmit` — zero new errors in touched files (same pre-existing baseline).
+    `npx next build` — compiles, same route shapes.
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though

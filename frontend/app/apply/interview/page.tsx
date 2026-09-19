@@ -304,7 +304,8 @@ export default function VideoPresentationPage() {
           <div className="text-center">
             <h1 className="text-3xl font-bold md:text-4xl">Screening Call</h1>
             <p className="mt-3 text-lg text-muted-foreground">
-              Answer questions asked by our AI guide. The interview takes approximately 5 minutes.
+              Answer questions asked by our AI guide. The interview takes approximately{" "}
+              {Math.round(maxDurationSecs / 60)} minutes.
             </p>
           </div>
 

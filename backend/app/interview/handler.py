@@ -302,6 +302,7 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
                     {
                         "type": "status",
                         "message": "Connected! Your video presentation session has started.",
+                        "maxDurationSecs": settings.max_interview_duration,
                     }
                 )
             )

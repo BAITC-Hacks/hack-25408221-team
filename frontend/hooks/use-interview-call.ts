@@ -367,6 +367,9 @@ export function useInterviewCall(userId: string | null) {
           const msg = JSON.parse(event.data as string)
 
           if (msg.type === "status") {
+            if (typeof msg.maxDurationSecs === "number") {
+              setMaxDurationSecs(msg.maxDurationSecs)
+            }
             setShowCheckIn(false)
           } else if (msg.type === "check_in") {
             setShowCheckIn(true)

@@ -406,6 +406,38 @@ def test_websocket_forwards_interrupted_signal_to_client(monkeypatch):
         app.dependency_overrides.pop(get_session, None)
 
 
+def test_websocket_initial_status_message_carries_configured_max_duration(monkeypatch):
+    """B13: the client's timer thresholds derive from the server's configured
+    session length, delivered over the same channel the call itself runs on
+    (not just the one-time POST /api/sessions response), so it stays correct
+    across reconnects too."""
+    provide_session = _make_session_provider()
+    app.dependency_overrides[get_session] = provide_session
+    monkeypatch.setattr(handler, "get_session", provide_session)
+    monkeypatch.setattr(websocket_route, "get_session", provide_session)
+
+    fake_session = FakeLiveSession(
+        responses=[
+            end_session_call({"applicant_notes": {}, "overall_impression": "x", "recommendation": "recommended"}),
+        ]
+    )
+    monkeypatch.setattr(
+        handler, "get_genai_client", lambda: make_fake_genai_client(fake_session)
+    )
+
+    try:
+        with TestClient(app) as client:
+            session_id, token = _register_and_create_session(client, "duration@example.com")
+
+            with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws:
+                status_msg = ws.receive_json()
+                assert status_msg["type"] == "status"
+                assert status_msg["maxDurationSecs"] == settings.max_interview_duration
+                ws.receive_json()  # "interview_ended"
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
 def test_websocket_rejects_second_concurrent_connection_to_same_session(monkeypatch):
     """B3 regression: before this fix, nothing stopped two concurrent websocket
     connections (e.g. a duplicate tab, or a reconnect while the old socket was
