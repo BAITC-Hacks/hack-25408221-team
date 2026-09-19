@@ -32,9 +32,9 @@ class UploadRecordingUseCase:
         if not session:
             return None, "Session not found"
 
-        if session.recording_url:
-            return None, "Recording already uploaded for this session"
-
+        # Deterministic per-session key -- re-uploading (retry after a
+        # network blip, or a legitimate re-submit) overwrites in place
+        # instead of erroring, so the client can safely retry.
         file_key = f"recordings/{session_id}/{filename}"
         await self.s3_client.upload_file(
             file_key=file_key,

@@ -121,8 +121,17 @@ async def upload_recording(
     sessionId: str = Form(...),
     file: UploadFile = File(...),
     current_user=Depends(get_current_user),
+    db_session: AsyncSession = Depends(get_session),
     use_case: UploadRecordingUseCase = Depends(_get_upload_recording_use_case),
 ):
+    session_obj = await SessionRepository(db_session).get_by_id(sessionId)
+    if not session_obj:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session_obj.user_id != current_user.id:
+        raise HTTPException(
+            status_code=403, detail="You do not have access to this session"
+        )
+
     if file.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=400,

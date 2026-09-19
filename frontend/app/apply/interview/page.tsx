@@ -41,6 +41,7 @@ export default function VideoPresentationPage() {
     uploading,
     uploadError,
     uploaded,
+    retryUpload,
   } = useInterviewCall(userId)
 
   useEffect(() => {
@@ -194,7 +195,17 @@ export default function VideoPresentationPage() {
               )}
               {uploadError && (
                 <div className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
-                  {uploadError}
+                  <p className="mb-2">{uploadError}</p>
+                  <Button size="sm" variant="outline" onClick={retryUpload} disabled={uploading}>
+                    {uploading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Retrying…
+                      </>
+                    ) : (
+                      "Retry upload"
+                    )}
+                  </Button>
                 </div>
               )}
               {uploaded && (

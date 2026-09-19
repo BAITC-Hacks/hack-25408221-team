@@ -47,7 +47,7 @@ export function useInterviewCall(userId: string | null) {
   const recordedBlobRef = useRef<Blob | null>(null)
   const audioDestRef = useRef<MediaStreamAudioDestinationNode | null>(null)
 
-  const { uploading, uploadError, uploaded } = useRecordingUpload(
+  const { uploading, uploadError, uploaded, retryUpload } = useRecordingUpload(
     sessionId,
     hasRecording,
     recordedBlobRef,
@@ -400,5 +400,6 @@ export function useInterviewCall(userId: string | null) {
     uploading,
     uploadError,
     uploaded,
+    retryUpload,
   }
 }

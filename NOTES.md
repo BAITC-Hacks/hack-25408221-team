@@ -585,6 +585,60 @@ added `osc.onended = () => ctx.close()`.
     carve-out: "for frontend, a unit test of the extracted logic, since browser audio cannot be
     tested in CI" — there is no pure logic here to extract, unlike the backend half of the fix).
 
+### B8: Recording upload flow (idempotent, retryable, ownership-checked)
+
+Confirmed by reading the code (backend confirmed directly; frontend confirmed directly after an
+initial Explore-agent survey), then fixed:
+
+1. **No ownership check (backend, security bug).** `POST /api/upload-recording` injected
+   `current_user` via `Depends(get_current_user)` but never compared it against the session's
+   owner — any authenticated user could upload a recording to any `sessionId` they could guess or
+   enumerate. Fixed in `backend/app/api/session_routes.py`: the route now fetches the session
+   first and checks `session_obj.user_id != current_user.id`, returning 404 if the session doesn't
+   exist and 403 if it belongs to someone else, mirroring the existing ownership-check pattern
+   already used on the `/ws/{session_id}` connect path in `app/api/websocket.py`.
+2. **Not idempotent (backend).** `UploadRecordingUseCase.execute()` hard-blocked any second
+   upload attempt for a session (`"Recording already uploaded for this session"`) even though the
+   storage key is already deterministic (`recordings/{session_id}/{filename}`), and both storage
+   backends (`S3Client.upload_file`'s local-filesystem `write_bytes` and its S3 `put_object`) both
+   naturally overwrite on that key. So a client retry after a network blip that actually succeeded
+   server-side got a permanent, un-retryable error instead of an idempotent overwrite. Fixed by
+   removing the blocking check in `backend/app/use_cases/session_use_cases.py` — re-uploading now
+   overwrites in place.
+3. **Runaway auto-retry loop (frontend, worse than the originally-suspected "no retry").**
+   `use-recording-upload.ts`'s effect depended on `uploading` and had no "already tried, give up"
+   flag: on failure, `setUploading(false)` in the `.finally()` changed a dependency the effect
+   itself was watching, so the effect re-fired immediately and re-attempted the upload again —
+   forever, with zero backoff, silently hammering the server on every render. (An earlier Explore
+   pass mischaracterized this as "no retry mechanism"; reading the effect's dependency array
+   directly showed it was the opposite — an uncontrolled infinite retry.) Fixed by adding an
+   `autoAttemptedRef` guard so the automatic attempt fires exactly once, and exposing the same
+   `attemptUpload` function as a `retryUpload` return value for **user-initiated** retries instead.
+4. **No retry button, no beforeunload warning (frontend, matches task description).** Added a
+   "Retry upload" button in `frontend/app/apply/interview/page.tsx`'s `uploadError` block, wired to
+   the new `retryUpload` from the hook (disabled while `uploading`). Added a `beforeunload`
+   listener in `use-recording-upload.ts`, active while `uploading` or `uploadError` is set (i.e.
+   the recording isn't safely saved yet), warning the user before they navigate away and lose the
+   only copy of their interview recording.
+5. **Size/content-type validation** (`MAX_UPLOAD_SIZE`, `ALLOWED_CONTENT_TYPES` in
+   `session_routes.py`) was already correctly implemented — confirmed by reading, no fix needed.
+
+- **Verification:**
+  - Backend: added `backend/tests/test_upload_recording.py` — four tests covering the ownership
+    rejection, a missing-session 404, re-upload-overwrites idempotency, and concurrent uploads to
+    the same session (via `asyncio.gather`) both succeeding. Verified as real regressions:
+    temporarily replaced `session_routes.py` and `session_use_cases.py` with their pre-fix `HEAD`
+    versions (`git show HEAD:... > file`, backup/restore via `/tmp`), reran — the ownership and
+    idempotency tests failed as expected (the 404 and concurrency tests still passed, since those
+    behaviors were already correct); restored the fix — all 4 passed. Full suite: **23 passed**
+    (19 before + these 4 new), confirming no regressions in the existing 19.
+  - Frontend: `npx tsc --noEmit` — zero new errors (same 2 pre-existing, unrelated errors as A7's
+    baseline; grepped the output for the touched files specifically — no matches). `npx next
+    build` — compiles, same route shapes as before.
+  - No new frontend unit test for the retry-loop/beforeunload fix: it's `useEffect`
+    dependency-array sequencing and a native browser event listener, not extractable pure logic,
+    and there's no test runner in this repo (same carve-out as B9).
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though
