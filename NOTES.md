@@ -1099,6 +1099,38 @@ recording, not to an unrelated server clock.
     `app/apply/form/page.tsx:49,60`); confirmed `lib/feature-flags.ts` itself produces no errors.
     No frontend unit test added — see finding 5 above.
 
+### A9 — Dead code triage list
+
+Scope: **catalog only, no deletions this sprint.** Removing any of these would be a plausibly
+behavior-preserving change, but verifying "zero call sites" with full confidence (rather than
+"zero call sites found by grep") is exactly the kind of judgment call that's cheap to get wrong
+under a "behavior-preserving refactors only" mandate — so these are flagged for a deliberate,
+separate cleanup pass rather than removed inline here. Found by grepping every use-case class,
+`app/ml/`/`app/core/` function, and frontend `lib/`/`hooks/` export for call sites outside their
+own definition and tests.
+
+1. **`CompleteSessionUseCase`** (`backend/app/use_cases/session_use_cases.py:146-151`) — never
+   instantiated anywhere in the app (grep for `CompleteSessionUseCase` across `backend/` returns
+   only its own definition). Note: the repository method it wraps,
+   `SessionRepositoryInterface.complete()`, is *not* dead — `app/interview/handler.py:295` calls
+   `repo.complete(session_id)` directly, bypassing the use case entirely. So it's the use-case
+   wrapper that's dead, not the underlying capability. Discovered originally during A5.
+2. **`backend/app/core/anonymization.py`** (whole file, 3 functions: `anonymize_text`,
+   `anonymize_transcript`, `anonymize_applicant_data`) — the entire module is orphaned; nothing in
+   `backend/` imports it (grep for `anonymiz` returns only hits inside the file itself). Its
+   presence is explained by `backend/IMPROVEMENTS_PLAN.md:138`, which lists it as a planned "PII
+   handling" module that was apparently scaffolded but never wired into the session/transcript save
+   path. Candidate for either wiring up for real or removing — not this sprint's call.
+3. **`frontend/lib/api.ts:16-27` — `getStoredUser()`** — exported, never imported anywhere in
+   `frontend/` (grep for `getStoredUser` outside its own file returns nothing).
+4. **`frontend/lib/api.ts:53-67` — `fetchApiRaw()`** — exported, never imported anywhere (same
+   check, no hits outside its own file).
+5. **`frontend/lib/auth.ts:39-55` — `getTimeUntilExpiry()`** — exported, never imported anywhere
+   outside its own file.
+
+Not included: this sprint's own `isFeatureEnabled()` (A8) — unused today by design (a
+just-added module meant to be adopted later), not dead code in the same sense as the above.
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though
