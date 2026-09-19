@@ -1199,8 +1199,61 @@ just-added module meant to be adopted later), not dead code in the same sense as
 
 ## Skipped
 
-(none yet)
+Per the SPEC's "reproduce or confirm before fixing; if it doesn't reproduce/fit, note it here and
+skip it" rule — these were investigated and deliberately not changed, with the reason:
+
+1. **B12 — real per-question progress signal from the model.** Confirmed the only way to get
+   genuine per-question progress out of Gemini Live is a new function-declaration plus an added
+   line in `SYSTEM_INSTRUCTION` telling the model to call it — i.e. a prompt change, which this
+   sprint's constraint ("Do NOT redesign the interview questions or prompt this sprint") rules out
+   regardless of how small. Everything else in B12's scope (real duration wiring, timer UI) was
+   fixed; this one piece is a named follow-up for a sprint where prompt changes are allowed. See
+   B12 above.
+2. **B9 — playback queue burst/catch-up scheduling.** Read `playPCM`'s scheduling math
+   (`Math.max(ctx.currentTime, nextPlayAtRef.current)`) and confirmed it already handles both
+   burst arrival and falling behind correctly. No bug found, so nothing changed. See B9 above.
+3. **B14 — suspected missing 429-vs-500 handling on existing slowapi rate limits.** Hypothesized
+   `app/main.py`'s unused `Limiter`/missing `RateLimitExceeded` handler meant a rate-limit trip on
+   `/api/login` or `/api/register` returned an unhandled 500. Disproved by reading slowapi's
+   source (`RateLimitExceeded` is an `HTTPException` subclass, handled automatically by Starlette
+   with no custom handler needed) and by direct reproduction (6 rapid `/api/login` calls; the 6th
+   correctly returned 429). No fix applied. See B14 above.
+4. **A9 — the 5 cataloged dead-code items.** Deliberately not deleted this sprint (catalog only);
+   see A9 above for the full list and reasoning (mainly: "zero call sites per grep" isn't the same
+   confidence level as "zero call sites, verified," and this sprint's mandate is
+   behavior-preserving, not a cleanup pass).
 
 ## Remaining
 
-(filled in at the end of the sprint)
+Real gaps identified during this sprint but intentionally left for later work, because fixing them
+would exceed this sprint's "behavior-preserving refactors + bug fixes, no new scoring, no prompt
+changes" scope:
+
+1. **No frontend test runner exists** (no jest/vitest/ts-node in `frontend/package.json`). Every
+   frontend-logic fix this sprint (B8, B9, B11, B12, B13, A7, A8) was verified via `tsc --noEmit` +
+   manual/read-through review instead of a unit test, per the SPEC's own allowance ("for frontend,
+   a unit test of the extracted logic... browser audio cannot be tested in CI") — but that
+   allowance assumes a runner exists to write the test *in*. Adding one (and backfilling tests for
+   all the extracted hooks from A7) is the single highest-value follow-up for this codebase's test
+   coverage.
+2. **Real per-question progress from the model** (B12, see Skipped #1) — needs a new Gemini
+   function-declaration + a `SYSTEM_INSTRUCTION` line; blocked on a sprint where prompt changes
+   are in scope.
+3. **A9's 5 dead-code items** — `CompleteSessionUseCase`, `backend/app/core/anonymization.py`
+   (whole module), and 3 unused frontend `lib/` exports. Catalogued with file/line references;
+   removing them is a good candidate for a dedicated small cleanup PR.
+4. **`backend/app/core/anonymization.py` specifically** is scaffolded but never wired into the
+   transcript/applicant-data save path (see `backend/IMPROVEMENTS_PLAN.md:138`) — worth a decision
+   (wire it up for real PII handling, or delete it) rather than leaving it orphaned indefinitely.
+5. **Pre-existing, unrelated-to-this-sprint issues, left as-is and documented above under "Known
+   pre-existing failures":** missing frontend `eslint`/`eslint-config-next` dependency, and 2
+   pre-existing `tsc` type errors outside the interview feature
+   (`app/admin/applicant/[id]/page.tsx:1210`, `app/apply/form/page.tsx:49,60`).
+6. **B14's throttle (and B3's `_active_connections` guard it sits next to) are in-memory,
+   single-process state** — correct for this app's current single-uvicorn-worker deployment
+   (documented in both), but would need to move to a shared store (e.g. Redis) before the app
+   could safely run with more than one worker/instance. Not a bug today; a scaling constraint to
+   revisit if the deployment topology changes.
+
+All 25 tasks in PART C's ordering (A1–A9, B1–B15) are done as of this entry; nothing was left
+incomplete or silently dropped.
