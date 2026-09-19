@@ -76,6 +76,35 @@ PART C of the spec. "Skipped" entries explain why; "Remaining" is filled in at t
 - Test run: **before this task, 3 passed** (A1's suite only). **After: 4 passed** (A1's 3 +
   this task's new `test_migrations.py`).
 
+### A3 — Config hygiene: fail-fast secrets, complete `.env.example`, live-call settings
+
+- **Bug found (security, pre-existing):** `jwt_secret` defaulted to the literal string
+  `"change-me-in-production"`. If the env var was ever missing in a deployment, the app would
+  start up fine and silently sign/verify auth JWTs with a public, guessable secret instead of
+  refusing to start — a real auth-bypass risk, not just a footgun.
+- **Fix:** `config.py`'s `jwt_secret` now has no default (same pattern already used for
+  `gemini_api_key`/`db_host`), so `Settings()` raises at import time if it's unset. Confirmed
+  the Azure deploy workflow already wires a real secret
+  (`.github/workflows/deploy-azure.yml:98`, `JWT_SECRET=secretref:jwt-secret`), so this doesn't
+  change deployed behavior — it only removes the silent-insecure-fallback path.
+  `admin_creation_secret` was left alone: it defaults to `""`, and the route
+  (`admin_routes.py:55`) already refuses to create an admin at all when it's unset, so an empty
+  default is safe-by-construction rather than a vulnerability.
+- New regression test `tests/test_config.py::test_missing_jwt_secret_fails_fast` spawns a
+  subprocess with `JWT_SECRET` unset and asserts `import app.config` fails.
+- **Live-call settings extracted:** `websocket.py`'s silence check-in constants
+  (`CHECK_IN_INTERVAL=20`, `CHECK_IN_WAIT=15`, `MAX_CHECK_INS=2`) were hardcoded module
+  globals. Moved into `Settings` as `checkin_silence_interval_seconds` /
+  `checkin_wait_seconds` / `max_checkins`, same default values — purely a config-hygiene
+  extraction (no behavior change), and it's what the later B1 silence-monitor fix will need to
+  tune without editing code.
+- **`.env.example` completeness:** it was missing `MODEL`, `MAX_INTERVIEW_DURATION`,
+  `JWT_ALGORITHM`, and `ADMIN_CREATION_SECRET` (present in `Settings` but absent from the
+  example file), plus the three new `CHECKIN_*` keys above. Added all of them, with the
+  `JWT_SECRET` line updated to explain it's required (no default) and a one-line note that
+  `ADMIN_CREATION_SECRET=""` disables the admin-creation endpoint.
+- Test run: **before this task, 4 passed.** **After: 5 passed** (adds `test_config.py`).
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though

@@ -82,9 +82,9 @@ You are writing notes for the admissions committee who will make the final decis
 
 Be honest and objective in your evaluation."""
 
-CHECK_IN_INTERVAL = 20
-CHECK_IN_WAIT = 15
-MAX_CHECK_INS = 2
+CHECK_IN_INTERVAL = settings.checkin_silence_interval_seconds
+CHECK_IN_WAIT = settings.checkin_wait_seconds
+MAX_CHECK_INS = settings.max_checkins
 
 
 @router.websocket("/ws/{session_id}")
