@@ -1,0 +1,57 @@
+# NOTES
+
+Running log for the repo-prep / live-call-stabilization sprint. One entry per task from
+PART C of the spec. "Skipped" entries explain why; "Remaining" is filled in at the end.
+
+## Done
+
+### A1 — Backend test safety net
+- Added `backend/tests/` with pytest + pytest-asyncio + aiosqlite:
+  - `conftest.py`: in-memory SQLite engine (StaticPool so all connections share one DB),
+    tables created via `SQLModel.metadata.create_all`, and a `client` fixture that overrides
+    the `get_session` FastAPI dependency so no test touches the real Postgres/RDS config.
+  - `tests/fakes/gemini.py`: a scripted fake for the google-genai Live API surface
+    (`client.aio.live.connect(...)` -> async context manager -> session with
+    `send_realtime_input` / `receive()` / `send_tool_response`), duck-typed to match exactly
+    what `app/api/websocket.py` touches (`server_content.input_transcription`,
+    `output_transcription`, `model_turn.parts`, `tool_call.function_calls`). This will be
+    reused by the B1/B2/B3/B4/B6/B7 websocket tests later in the sprint.
+  - `tests/test_smoke.py`: register/login/get-user round trip through the real app + fake DB,
+    a duplicate-email rejection check, and a check that the fake Gemini fixture scripts a
+    conversation end-to-end. 3 tests, all passing.
+- `backend/requirements-dev.txt` (pytest, pytest-asyncio, aiosqlite) layered on top of the
+  existing `requirements.txt` so prod deps are untouched.
+- `backend/pytest.ini` (`asyncio_mode = auto`, function-scoped async fixtures).
+- Root `Makefile` (`make test`, `make test-backend`, `make lint-frontend`,
+  `make typecheck-frontend`).
+- `.github/workflows/ci.yml`: runs backend pytest, and frontend `pnpm lint` +
+  `pnpm exec tsc --noEmit` (see "Known pre-existing failures" below — the frontend jobs are
+  wired up but not currently green, for reasons unrelated to this sprint's scope).
+- `app.config.Settings` requires `gemini_api_key` and `db_host` with no default, so importing
+  `app.main` (needed for the test client) throws at import time without them. `conftest.py`
+  sets `GEMINI_API_KEY` / `DB_HOST` / `JWT_SECRET` env vars via `os.environ.setdefault` before
+  the first app import so tests don't need a real `.env`.
+- Test run: **before this task, 0 tests existed.** After: `3 passed` (`python -m pytest` in
+  `backend/`, run locally in a fresh venv against `requirements-dev.txt`).
+
+## Known pre-existing failures (not caused by this sprint, not in scope)
+
+- `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though
+  `package.json` defines `"lint": "eslint ."`. Running it fails with `eslint: command not
+  found`. This predates this sprint and is unrelated to the live-call feature; not fixed here
+  since the spec is behavior-preserving bug fixes on the interview feature, not a general
+  frontend dependency audit. CI still runs the script so this becomes visibly red instead of
+  silently never-checked.
+- `pnpm exec tsc --noEmit` currently reports 2 real type errors, both outside the interview
+  feature: `app/admin/applicant/[id]/page.tsx:1210` (a `<Progress className=...>` prop that
+  doesn't exist on that component's type) and `app/apply/form/page.tsx:49,60` (`FormErrors`
+  type used but not imported/declared). Left as-is for the same reason as above; flagging here
+  so they don't get confused with anything introduced by this sprint.
+
+## Skipped
+
+(none yet)
+
+## Remaining
+
+(filled in at the end of the sprint)
