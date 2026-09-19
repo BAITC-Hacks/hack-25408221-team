@@ -457,6 +457,54 @@ PART C of the spec. "Skipped" entries explain why; "Remaining" is filled in at t
   logging changes and before writing any new test, confirming the pre-existing 16 still passed
   unchanged. **After adding the two new tests: 18 passed.**
 
+### A7 — Split frontend `interview/page.tsx` into hooks
+
+- **Before:** `frontend/app/apply/interview/page.tsx` was one 850-line client component mixing
+  auth redirect, session creation, camera/mic permission probing, the Gemini Live websocket,
+  raw audio capture/playback (AudioWorklet + AudioContext), on-device `MediaRecorder`, upload of
+  the finished recording, the interview timer, and three full JSX screens (instructions / active
+  call / completed) — all sharing one flat pile of `useState`/`useRef` with no seams, so any new
+  feature (e.g. reconnection handling in B10, or typed error states in B11) would have to be
+  wedged into the same function.
+- **Fix (pure extraction, no logic changes):** pulled the non-JSX logic out into four hooks under
+  `frontend/hooks/`, moving state/refs/callbacks verbatim (same variable names, same effect
+  dependency arrays, same control flow) rather than rewriting any of it:
+  - `use-auth-guard.ts` — the localStorage userId check + `/signin` redirect.
+  - `use-media-permissions.ts` — `checkMediaPermissions` and its `micDenied`/`noCamera`/
+    `checkingMedia`/`audioOnly` state (setters exposed, since the caller in
+    `use-interview-call.ts` sets `audioOnly`/`noCamera`/`micDenied` directly in a couple of
+    places based on its own logic, matching the original component's behavior).
+  - `use-recording-upload.ts` — the effect that uploads the recorded blob once available;
+    takes `sessionId`/`hasRecording`/the recorded-blob ref as arguments so it has no dependency
+    on the audio/websocket internals.
+  - `use-interview-call.ts` — the big one: session creation, the websocket connection and all its
+    handlers, audio capture (AudioWorklet) and playback (raw PCM scheduling), `MediaRecorder`
+    wiring, the timer, and the unmount cleanup effect. Composes the two hooks above internally.
+  - `page.tsx` is now ~430 lines of JSX only, calling `useAuthGuard()` and
+    `useInterviewCall(userId)` and rendering their returned state — no imperative logic left in
+    the component body except the page-level `screenState`/`showConfetti` transition, which
+    stays here since it's about *this page's* screens, not the call itself.
+- **Verification (no test runner exists for the frontend — see "Known pre-existing failures" —
+  so this used every check that was available instead of skipping verification):**
+  - `npx tsc --noEmit`: identical output before and after (the same 3 pre-existing, unrelated
+    errors in `app/admin/applicant/[id]/page.tsx` and `app/apply/form/page.tsx`; zero errors in
+    any of the touched files).
+  - `npx next build`: compiles successfully, `/apply/interview` still prerenders as a static
+    route.
+  - Ran `next dev` on a scratch port and `curl`'d `/apply/interview`: 200, renders the expected
+    (unauthenticated) loading state — same first paint as before the refactor, since the
+    auth-guard redirect logic is unchanged.
+  - Diffed the extracted hooks against the original inline code line-by-line to confirm every
+    state variable, ref, callback dependency array, and the one pre-existing quirk (the "Start
+    Interview" button calling `checkMediaPermissions()` once itself and then again inside
+    `startPresentation()`) were carried over unchanged rather than "fixed" — that quirk is
+    B9/B11 territory, not in scope for a behavior-preserving split.
+- No new tests added: there is nothing here yet that's meaningfully unit-testable without a
+  browser (the hooks still call `navigator.mediaDevices`, `AudioContext`, `MediaRecorder`,
+  `WebSocket` directly) — B9 (audio pipeline hardening) is the task that's expected to introduce
+  the seams (e.g. an injectable audio-pipeline interface) that would make these actually
+  testable in CI. Splitting into hooks now is what makes that seam possible later.
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though
