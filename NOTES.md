@@ -926,6 +926,83 @@ recording, not to an unrelated server clock.
     a test harness. The test above proves the calibration mechanism re-anchors timestamps
     correctly given a simulated delay, which is the part that can regress silently in code.
 
+### A5 — Repository/service boundaries + `app/domain/` shared types
+
+1. **`app/domain/enums.py` (new).** `SessionStatus` and `Recommendation` are now `str, Enum`
+   classes matching the existing raw string values exactly (`in_progress`/`completed`/
+   `incomplete`; `strongly_recommended`/`recommended`/`needs_review`/`not_recommended`). Every
+   assignment site uses `.value` explicitly (e.g. `SessionStatus.COMPLETED.value`) rather than
+   the bare enum member — `str(EnumMember)` can print `"ClassName.MEMBER"` instead of the raw
+   value on some serialization paths, and `.value` sidesteps that ambiguity entirely, keeping
+   the on-disk/serialized string byte-for-byte identical to before.
+   - `Recommendation` is wired only into `app/interview/handler.py`'s `VALID_RECOMMENDATIONS`
+     validation set. Deliberately **not** wired into the ~10 `app/ml/*` scoring/fairness/triage/
+     evaluation files that also use raw recommendation strings — that's scoring-adjacent and
+     explicitly out of this sprint's scope ("Do NOT build new scoring"), and touching it offers
+     no bug-fix value while carrying real regression risk for zero benefit.
+2. **`TranscriptEntry` (new, in `app/domain/entities.py`), narrowly scoped.** Used only as the
+   request-body type for `POST /api/sessions/{session_id}/analyze` — confirmed via grep that
+   this route has zero frontend callers (the admin UI's AI-detection button calls `/detect-ai`,
+   not `/analyze`), making it a safe, low-risk boundary to introduce a typed model at.
+   Deliberately did **not** retype `Session.transcript` / `SessionResponse.transcript` (still
+   `Optional[List[dict]]`): traced every consumer outside `handler.py` (`session_routes.py`,
+   `admin_routes.py`, `validation_routes.py`, `enhanced_analysis.py`, `user_use_cases.py`,
+   `repositories.py`) and several do raw dict access (`entry["role"]`, `.get(...)`) that would
+   break immediately if transcript entries became Pydantic model instances — retyping the field
+   itself would ripple far beyond this task's safe scope.
+3. **`session_routes.py`: no route handler instantiates `SessionRepository`/`UserRepository`
+   directly anymore.**
+   - Two new use cases, `SubmitApplicationUseCase` and `StartSessionUseCase`
+     (`app/use_cases/session_use_cases.py`), back `/api/applications` and `/api/sessions`. Each
+     returns a `(result, error, status_code)` triplet — a new, additive convention alongside the
+     existing `(result, error)` pair used by `GetSessionUseCase`/`UploadRecordingUseCase` —
+     needed because these two routes preserve multiple distinct HTTP status codes (400/404/409)
+     that inline route code used to return directly.
+   - `upload_recording`'s ownership pre-check, `get_recording_url`, and `detect_ai_in_session`
+     now all fetch the session via the pre-existing `GetSessionUseCase` instead of a direct
+     `SessionRepository` call, with zero changes to `GetSessionUseCase` itself.
+   - `upload_recording`'s own `UploadRecordingUseCase` was left untouched (still takes
+     `session_id, file_content, filename` and doesn't check ownership itself) — the ownership
+     check was moved to a *separate*, earlier `GetSessionUseCase` call in the route, preserving
+     the exact original error-precedence order (404/403 ownership, then 400/400 content-type/
+     size, then the upload).
+   - Both new use cases compose the pre-existing `CreateSessionUseCase` internally rather than
+     calling `session_repo.create()` directly, so it isn't left orphaned.
+   - `serve_local_upload` and `get_recording` were left completely unchanged — the former's
+     unused `db_session` dependency predates this task (confirmed via `git log -p`/blame
+     equivalent reading), and the latter already used `GetSessionUseCase` before this task
+     touched anything.
+4. **Confirmed no silent breakage from the `SessionStatus` enum.** `grep -n
+   "\"completed\"\|\"incomplete\"\|\"in_progress\""` across `admin_routes.py`,
+   `enhanced_analysis.py`, and `validation_routes.py` returned nothing — none of them do raw
+   status-string literal comparisons that the enum's introduction could silently break.
+5. **Dead code spotted, not removed here.** `CompleteSessionUseCase`
+   (`session_use_cases.py`) has zero call sites anywhere in the codebase. Left as-is and flagged
+   for the A9 dead-code triage list rather than deleted as a drive-by in a task that's supposed
+   to be about boundaries, not cleanup.
+6. **Test-infra fix (no production behavior change): rate limiter leaking state across tests.**
+   Adding new tests that call `/api/register` (below) exposed a latent test-isolation gap: the
+   `/api/register`/`/api/login` slowapi `Limiter` in `app/api/user_routes.py` is a process-wide
+   in-memory singleton keyed by client IP, and every test client resolves to the same address.
+   With enough register calls across the whole run, later test files started failing with 429s
+   that had nothing to do with what they were testing. Fixed by adding an autouse
+   `_reset_rate_limits` fixture in `tests/conftest.py` that calls `limiter.reset()` before every
+   test — this touches no production code path, only test isolation.
+
+- **Verification:**
+  - Backend: added regression tests in `tests/test_session_routes.py` for branches that used to
+    be inline in the route and are now inside the new use cases —
+    `test_create_session_requires_user_id`, `test_create_session_requires_program`,
+    `test_create_session_rejects_unknown_user`,
+    `test_create_session_rejects_duplicate_after_completion` (409 path),
+    `test_submit_application_merges_into_existing_session` (existing-session merge into
+    `applicant_data`), `test_submit_application_requires_user_id`. Full suite before and after:
+    **29 passed → 35 passed** (29 + 6 new), no regressions, once the rate-limiter test-isolation
+    fix above was in place (without it, unrelated tests later in the run started flaking on
+    429s purely from register-call volume, not from anything this task changed).
+  - Frontend: untouched by this task (backend-only refactor); not re-verified since no frontend
+    file was edited.
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though

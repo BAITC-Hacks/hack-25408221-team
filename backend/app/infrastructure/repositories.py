@@ -8,6 +8,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.security import hash_password
 from app.domain.entities import Session, SessionCreate, User, UserCreate
+from app.domain.enums import SessionStatus
 from app.domain.interfaces import SessionRepositoryInterface, UserRepositoryInterface
 from app.infrastructure.models import SessionTable, UserTable
 
@@ -204,7 +205,7 @@ class SessionRepository(SessionRepositoryInterface):
         if not db_session:
             raise ValueError(f"Session {session_id} not found")
         db_session.completed_at = datetime.utcnow()
-        db_session.status = "completed"
+        db_session.status = SessionStatus.COMPLETED.value
         self.session.add(db_session)
         await self.session.commit()
         await self.session.refresh(db_session)
@@ -217,7 +218,7 @@ class SessionRepository(SessionRepositoryInterface):
         db_session = result.scalars().first()
         if not db_session:
             raise ValueError(f"Session {session_id} not found")
-        db_session.status = "incomplete"
+        db_session.status = SessionStatus.INCOMPLETE.value
         self.session.add(db_session)
         await self.session.commit()
         await self.session.refresh(db_session)

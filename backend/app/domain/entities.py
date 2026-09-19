@@ -3,6 +3,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
+from app.domain.enums import SessionStatus
+
 
 class User(BaseModel):
     id: str
@@ -36,6 +38,23 @@ class UserLogin(BaseModel):
     password: str
 
 
+class TranscriptEntry(BaseModel):
+    """One coalesced turn from the live interview (see
+    app/interview/handler.py's append_turn_text). Used to validate the
+    request body of the one route that accepts a transcript from outside
+    the server (POST /sessions/{id}/analyze) -- not used for
+    Session.transcript itself, since that field flows untouched as raw
+    dicts through the live-call hot path (handler.py) and several
+    ML/admin consumers (app/ml/ai_detection.py, admin_routes.py,
+    enhanced_analysis.py) that index it with dict access; retyping it
+    there would ripple into those call sites for no behavior-preserving
+    benefit."""
+
+    role: str
+    text: str
+    timestamp: float
+
+
 class Session(BaseModel):
     id: str
     user_id: str
@@ -46,7 +65,7 @@ class Session(BaseModel):
     evaluation: Optional[Dict[str, Any]] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-    status: str = "in_progress"
+    status: str = SessionStatus.IN_PROGRESS.value
     created_at: datetime
 
 
@@ -65,7 +84,7 @@ class SessionResponse(BaseModel):
     evaluation: Optional[Dict[str, Any]] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-    status: str = "in_progress"
+    status: str = SessionStatus.IN_PROGRESS.value
     created_at: datetime
 
 

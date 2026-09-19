@@ -12,13 +12,15 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.config import settings
 from app.core.auth import get_current_user
 from app.core.security import decode_access_token
-from app.domain.entities import SessionCreate
+from app.domain.entities import TranscriptEntry
 from app.infrastructure.database import get_session
 from app.infrastructure.repositories import SessionRepository, UserRepository
 from app.infrastructure.s3_client import s3_client
 from app.use_cases.session_use_cases import (
     CreateSessionUseCase,
     GetSessionUseCase,
+    StartSessionUseCase,
+    SubmitApplicationUseCase,
     UploadRecordingUseCase,
 )
 from app.use_cases.analyze_session_use_case import AnalyzeSessionUseCase
@@ -30,8 +32,22 @@ MAX_UPLOAD_SIZE = settings.max_upload_size_mb * 1024 * 1024
 ALLOWED_CONTENT_TYPES = {"video/webm", "video/mp4", "audio/webm"}
 
 
-def _get_create_session_use_case(db_session: AsyncSession = Depends(get_session)):
-    return CreateSessionUseCase(SessionRepository(db_session))
+def _get_submit_application_use_case(db_session: AsyncSession = Depends(get_session)):
+    session_repo = SessionRepository(db_session)
+    return SubmitApplicationUseCase(
+        session_repo=session_repo,
+        user_repo=UserRepository(db_session),
+        create_session_use_case=CreateSessionUseCase(session_repo),
+    )
+
+
+def _get_start_session_use_case(db_session: AsyncSession = Depends(get_session)):
+    session_repo = SessionRepository(db_session)
+    return StartSessionUseCase(
+        session_repo=session_repo,
+        user_repo=UserRepository(db_session),
+        create_session_use_case=CreateSessionUseCase(session_repo),
+    )
 
 
 def _get_upload_recording_use_case(db_session: AsyncSession = Depends(get_session)):
@@ -53,67 +69,33 @@ def _get_analyze_use_case(db_session: AsyncSession = Depends(get_session)):
 async def submit_application(
     payload: dict,
     current_user=Depends(get_current_user),
-    db_session: AsyncSession = Depends(get_session),
+    use_case: SubmitApplicationUseCase = Depends(_get_submit_application_use_case),
 ):
-    user_id = payload.get("userId")
-    program = payload.get("program")
-    form_data = payload.get("formData", {})
-
-    if not user_id:
-        raise HTTPException(status_code=400, detail="userId is required")
-
-    session_repo = SessionRepository(db_session)
-    existing = await session_repo.get_by_user_id(user_id)
-
-    if existing:
-        merged = dict(existing.applicant_data or {})
-        merged["form_data"] = form_data
-        await session_repo.update_applicant_data(existing.id, merged)
-        return {"ok": True, "sessionId": existing.id}
-
-    if not program:
-        raise HTTPException(status_code=400, detail="program is required")
-
-    user_repo = UserRepository(db_session)
-    user = await user_repo.get_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    session_create = SessionCreate(user_id=user_id, program=program)
-    use_case = CreateSessionUseCase(session_repo)
-    new_session = await use_case.execute(session_create)
-    await session_repo.update_applicant_data(new_session.id, {"form_data": form_data})
-    return {"ok": True, "sessionId": new_session.id}
+    session_id, error, status_code = await use_case.execute(
+        user_id=payload.get("userId"),
+        program=payload.get("program"),
+        form_data=payload.get("formData", {}),
+    )
+    if error:
+        raise HTTPException(status_code=status_code, detail=error)
+    return {"ok": True, "sessionId": session_id}
 
 
 @router.post("/sessions")
 async def create_session(
     payload: dict,
     current_user=Depends(get_current_user),
-    db_session: AsyncSession = Depends(get_session),
+    use_case: StartSessionUseCase = Depends(_get_start_session_use_case),
 ):
-    user_id = payload.get("userId")
-    program = payload.get("program")
-
-    if not user_id or user_id == "undefined":
-        raise HTTPException(status_code=400, detail="userId is required")
-    if not program:
-        raise HTTPException(status_code=400, detail="program is required")
-
-    user_repo = UserRepository(db_session)
-    user = await user_repo.get_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    session_repo = SessionRepository(db_session)
-    existing = await session_repo.get_by_user_id(user_id)
-    if existing and existing.completed_at:
-        raise HTTPException(status_code=409, detail="Interview already completed. Only one submission is allowed.")
-
-    session_create = SessionCreate(user_id=user_id, program=program)
-    use_case = CreateSessionUseCase(session_repo)
-    new_session = await use_case.execute(session_create)
-    return {"sessionId": new_session.id, "maxDurationSecs": settings.max_interview_duration}
+    new_session, error, status_code = await use_case.execute(
+        user_id=payload.get("userId"), program=payload.get("program")
+    )
+    if error:
+        raise HTTPException(status_code=status_code, detail=error)
+    return {
+        "sessionId": new_session.id,
+        "maxDurationSecs": settings.max_interview_duration,
+    }
 
 
 @router.post("/upload-recording")
@@ -121,11 +103,11 @@ async def upload_recording(
     sessionId: str = Form(...),
     file: UploadFile = File(...),
     current_user=Depends(get_current_user),
-    db_session: AsyncSession = Depends(get_session),
+    get_session_use_case: GetSessionUseCase = Depends(_get_get_session_use_case),
     use_case: UploadRecordingUseCase = Depends(_get_upload_recording_use_case),
 ):
-    session_obj = await SessionRepository(db_session).get_by_id(sessionId)
-    if not session_obj:
+    session_obj, error = await get_session_use_case.execute(sessionId)
+    if error or not session_obj:
         raise HTTPException(status_code=404, detail="Session not found")
     if session_obj.user_id != current_user.id:
         raise HTTPException(
@@ -162,11 +144,13 @@ async def upload_recording(
 @router.post("/sessions/{session_id}/analyze")
 async def analyze_session(
     session_id: str,
-    transcript: List[dict],
+    transcript: List[TranscriptEntry],
     current_user=Depends(get_current_user),
     use_case: AnalyzeSessionUseCase = Depends(_get_analyze_use_case),
 ):
-    result, error = await use_case.execute(session_id, transcript)
+    result, error = await use_case.execute(
+        session_id, [entry.model_dump() for entry in transcript]
+    )
     if error:
         raise HTTPException(status_code=400, detail=error)
     return result
@@ -191,7 +175,7 @@ async def get_recording(
 async def get_recording_url(
     session_id: str,
     token: Optional[str] = Query(None),
-    db_session: AsyncSession = Depends(get_session),
+    use_case: GetSessionUseCase = Depends(_get_get_session_use_case),
 ):
     if not token:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -199,9 +183,8 @@ async def get_recording_url(
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-    repo = SessionRepository(db_session)
-    session_obj = await repo.get_by_id(session_id)
-    if not session_obj or not session_obj.recording_url:
+    session_obj, error = await use_case.execute(session_id)
+    if error or not session_obj or not session_obj.recording_url:
         raise HTTPException(status_code=404, detail="Recording not found")
 
     fresh_url = await s3_client.get_presigned_url(session_obj.recording_url)
@@ -212,11 +195,10 @@ async def get_recording_url(
 async def detect_ai_in_session(
     session_id: str,
     current_user=Depends(get_current_user),
-    db_session: AsyncSession = Depends(get_session),
+    use_case: GetSessionUseCase = Depends(_get_get_session_use_case),
 ):
-    repo = SessionRepository(db_session)
-    session_obj = await repo.get_by_id(session_id)
-    if not session_obj:
+    session_obj, error = await use_case.execute(session_id)
+    if error or not session_obj:
         raise HTTPException(status_code=404, detail="Session not found")
     if not session_obj.transcript:
         raise HTTPException(status_code=422, detail="Session has no transcript yet")

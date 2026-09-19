@@ -4,6 +4,8 @@ from typing import Optional
 from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
 
+from app.domain.enums import SessionStatus
+
 
 def _utc_now() -> datetime:
     return datetime.utcnow()
@@ -33,5 +35,5 @@ class SessionTable(SQLModel, table=True):
     evaluation: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-    status: str = Field(default="in_progress")
+    status: str = Field(default=SessionStatus.IN_PROGRESS.value)
     created_at: datetime = Field(default_factory=_utc_now)

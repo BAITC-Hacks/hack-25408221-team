@@ -11,8 +11,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 
+from app.api.user_routes import limiter as register_login_limiter
 from app.infrastructure.database import get_session
 from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    """The register/login rate limiter is a process-wide in-memory singleton
+    keyed by client IP -- every test client resolves to the same address, so
+    without a reset here, unrelated tests earlier in the run silently eat into
+    later tests' /api/register or /api/login quota."""
+    register_login_limiter.reset()
+    yield
 
 
 @pytest_asyncio.fixture

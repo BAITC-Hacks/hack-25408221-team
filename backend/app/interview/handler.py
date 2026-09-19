@@ -8,6 +8,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from google.genai import types
 
 from app.config import settings
+from app.domain.enums import Recommendation
 from app.infrastructure.database import get_session
 from app.infrastructure.repositories import SessionRepository
 from app.interview.gemini_client import build_live_connect_config, get_genai_client
@@ -18,12 +19,11 @@ CHECK_IN_INTERVAL = settings.checkin_silence_interval_seconds
 CHECK_IN_WAIT = settings.checkin_wait_seconds
 MAX_CHECK_INS = settings.max_checkins
 
-VALID_RECOMMENDATIONS = {
-    "strongly_recommended",
-    "recommended",
-    "needs_review",
-    "not_recommended",
-}
+# Only the validation call site below is wired to the domain Recommendation
+# enum. The ~10 app/ml/* scoring/fairness/triage modules still use their own
+# raw "strongly_recommended"/etc. string literals -- left untouched here since
+# retyping them is scoring-adjacent and out of this sprint's scope (see NOTES.md).
+VALID_RECOMMENDATIONS = {r.value for r in Recommendation}
 
 
 def validate_end_session_args(args: dict) -> dict:
