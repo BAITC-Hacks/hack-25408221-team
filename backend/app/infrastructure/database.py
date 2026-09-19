@@ -4,7 +4,6 @@ import boto3
 from botocore.config import Config
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlmodel import SQLModel
 
 from app.config import settings
 
@@ -47,9 +46,7 @@ async def init_db():
         def provide_token(dialect, conn_rec, cargs, cparams):
             cparams["password"] = _generate_rds_iam_token()
 
-    async with _engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    logger.info("Database initialized")
+    logger.info("Database engine initialized")
 
 
 async def get_session():

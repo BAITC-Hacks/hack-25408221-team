@@ -34,6 +34,48 @@ PART C of the spec. "Skipped" entries explain why; "Remaining" is filled in at t
 - Test run: **before this task, 0 tests existed.** After: `3 passed` (`python -m pytest` in
   `backend/`, run locally in a fresh venv against `requirements-dev.txt`).
 
+### A2 — Migrations: baseline schema was never actually created
+
+- **Bug found (critical, pre-existing):** the whole Alembic chain (4 revisions) never created
+  the `users`/`sessions` tables. `grep -rn "create_table\|drop_table" alembic/versions/`
+  returned nothing. The root revision (`18680c0bb149_initial_tables`) and
+  `0317cbf399f5_added_sessions` both had empty `upgrade()`/`downgrade()` bodies (`pass`). A
+  real `alembic upgrade head` against a blank database would fail at the third revision
+  (`ALTER TABLE sessions ADD COLUMN ...` before `sessions` exists). This was masked in
+  practice because `database.py`'s `init_db()` called `SQLModel.metadata.create_all` on every
+  app startup, which silently did the real schema creation — Alembic was decorative.
+- **Fix:**
+  - `18680c0bb149_initial_tables.py`: `upgrade()`/`downgrade()` now actually `create_table` /
+    `drop_table` for `users` and `sessions` at their baseline (pre-role, pre-transcript/
+    applicant_data/evaluation) columns.
+  - `0317cbf399f5_added_sessions.py`: left as a no-op (revision id/chain preserved for any
+    environment that already stamped `alembic_version`), with a comment explaining the table
+    creation moved to the baseline revision.
+  - `database.py`: removed the `create_all` call from `init_db()`. Migrations are now the sole
+    schema authority.
+  - `Dockerfile`: `CMD` now runs `alembic upgrade head` before starting uvicorn (idempotent on
+    every container start). This was necessary because `.github/workflows/deploy-azure.yml`
+    has no migration step of its own — without it, a fresh deploy would boot against an empty
+    schema now that `create_all` is gone.
+- **New regression test** `tests/test_migrations.py`: walks the full revision chain
+  (`ScriptDirectory.walk_revisions(base="base", head="head")`) against a fresh in-memory
+  SQLite database via `MigrationContext`/`Operations.context()`, applying each revision's
+  `upgrade()` in order, then asserts the final `users`/`sessions` column sets match
+  `models.py`. This is the test that would have caught the original bug.
+  - Caveat: the head revision (`6a5febe4cf83_add_user_role_field`) ends with
+    `op.alter_column("users", "role", nullable=False)`, which is valid Postgres DDL (the
+    actual target dialect, per `env.py`/`config.py`/`docker-compose.yml`) but SQLite has no
+    `ALTER TABLE ... ALTER COLUMN` support at all. The test catches that specific
+    `OperationalError` and continues — by that point the same revision's `add_column`/`UPDATE`
+    statements have already run (Alembic executes statements eagerly), so the schema
+    assertions are unaffected. This is a SQLite-testing-only gap, not a real bug; not worth a
+    `batch_alter_table` rewrite of the migration for a dialect the app never runs against.
+- Verified before removing `create_all`: manually drove the corrected chain against
+  in-memory SQLite via a standalone `MigrationContext`/`Operations.context()` script (same
+  technique as the test) to confirm `create_table`/`add_column` produce the expected schema.
+- Test run: **before this task, 3 passed** (A1's suite only). **After: 4 passed** (A1's 3 +
+  this task's new `test_migrations.py`).
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though
