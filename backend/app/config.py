@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     checkin_wait_seconds: int = 15
     max_checkins: int = 2
 
+    # Evaluation-save robustness (see app/interview/handler.py).
+    evaluation_save_max_attempts: int = 3
+    evaluation_save_retry_delay_seconds: float = 0.5
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

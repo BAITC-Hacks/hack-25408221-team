@@ -18,6 +18,54 @@ CHECK_IN_INTERVAL = settings.checkin_silence_interval_seconds
 CHECK_IN_WAIT = settings.checkin_wait_seconds
 MAX_CHECK_INS = settings.max_checkins
 
+VALID_RECOMMENDATIONS = {
+    "strongly_recommended",
+    "recommended",
+    "needs_review",
+    "not_recommended",
+}
+
+
+def validate_end_session_args(args: dict) -> dict:
+    """The Live API's function-calling schema (build_end_session_tool) declares
+    these shapes, but a model response is never guaranteed to match its
+    declared schema -- validate before writing to the DB instead of trusting
+    it blindly. Raises ValueError on the first invalid/missing field."""
+    applicant_notes = args.get("applicant_notes")
+    if not isinstance(applicant_notes, dict):
+        raise ValueError(f"applicant_notes missing or not an object: {applicant_notes!r}")
+
+    overall_impression = args.get("overall_impression")
+    if not isinstance(overall_impression, str) or not overall_impression.strip():
+        raise ValueError(f"overall_impression missing or empty: {overall_impression!r}")
+
+    recommendation = args.get("recommendation")
+    if recommendation not in VALID_RECOMMENDATIONS:
+        raise ValueError(f"recommendation not a recognized value: {recommendation!r}")
+
+    overall_score = args.get("overall_score")
+    if overall_score is not None and (
+        not isinstance(overall_score, (int, float)) or not (1 <= overall_score <= 10)
+    ):
+        raise ValueError(f"overall_score not numeric in range 1-10: {overall_score!r}")
+
+    strengths = args.get("strengths") or []
+    if not isinstance(strengths, list) or not all(isinstance(s, str) for s in strengths):
+        raise ValueError(f"strengths must be a list of strings: {strengths!r}")
+
+    concerns = args.get("concerns") or []
+    if not isinstance(concerns, list) or not all(isinstance(c, str) for c in concerns):
+        raise ValueError(f"concerns must be a list of strings: {concerns!r}")
+
+    return {
+        "applicant_notes": applicant_notes,
+        "overall_impression": overall_impression,
+        "overall_score": overall_score,
+        "recommendation": recommendation,
+        "strengths": strengths,
+        "concerns": concerns,
+    }
+
 # Tracks session_ids with an open live connection. Only safe because the app
 # runs as a single uvicorn worker (see Dockerfile) -- state here is process-wide
 # in-memory, not shared across workers/instances. Checked and updated with no
@@ -135,35 +183,79 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
             except Exception:
                 break
 
-    async def save_evaluation(args: dict):
-        nonlocal evaluation_saved
+    async def dead_letter_evaluation(raw_args: dict, reason: str):
+        """Best-effort: record why the evaluation couldn't be saved instead of
+        silently dropping it, reusing the existing `evaluation` JSON column and
+        `mark_incomplete` rather than adding new schema."""
         try:
             async for db_session in get_session():
                 repo = SessionRepository(db_session)
-                applicant_notes = args.get("applicant_notes", {})
-                evaluation = {
-                    "overall_impression": args.get("overall_impression", ""),
-                    "overall_score": args.get("overall_score"),
-                    "recommendation": args.get("recommendation", ""),
-                    "strengths": args.get("strengths", []),
-                    "concerns": args.get("concerns", []),
-                }
-                existing_session = await repo.get_by_id(session_id)
-                existing_data = (
-                    dict(existing_session.applicant_data or {})
-                    if existing_session
-                    else {}
-                )
-                existing_data.update(applicant_notes)
                 await repo.update_transcript(session_id, transcript)
-                await repo.update_applicant_data(session_id, existing_data)
-                await repo.update_evaluation(session_id, evaluation)
-                await repo.complete(session_id)
-                evaluation_saved = True
-                logger.info(f"Saved evaluation for session {session_id}")
+                await repo.update_evaluation(
+                    session_id,
+                    {
+                        "evaluation_save_failed": True,
+                        "reason": reason,
+                        "raw_args": raw_args,
+                    },
+                )
+                await repo.mark_incomplete(session_id)
+                logger.error(
+                    f"Dead-lettered evaluation for session {session_id}: {reason}"
+                )
                 break
         except Exception as e:
-            logger.error(f"Failed to save evaluation: {e}", exc_info=True)
+            logger.error(f"Failed to dead-letter evaluation: {e}", exc_info=True)
+
+    async def save_evaluation(args: dict) -> bool:
+        nonlocal evaluation_saved
+        try:
+            validated = validate_end_session_args(args)
+        except ValueError as e:
+            logger.error(f"Invalid end_session args for {session_id}: {e}")
+            await dead_letter_evaluation(args, f"invalid args: {e}")
+            return False
+
+        last_error: Optional[Exception] = None
+        for attempt in range(1, settings.evaluation_save_max_attempts + 1):
+            try:
+                async for db_session in get_session():
+                    repo = SessionRepository(db_session)
+                    evaluation = {
+                        "overall_impression": validated["overall_impression"],
+                        "overall_score": validated["overall_score"],
+                        "recommendation": validated["recommendation"],
+                        "strengths": validated["strengths"],
+                        "concerns": validated["concerns"],
+                    }
+                    existing_session = await repo.get_by_id(session_id)
+                    existing_data = (
+                        dict(existing_session.applicant_data or {})
+                        if existing_session
+                        else {}
+                    )
+                    existing_data.update(validated["applicant_notes"])
+                    await repo.update_transcript(session_id, transcript)
+                    await repo.update_applicant_data(session_id, existing_data)
+                    await repo.update_evaluation(session_id, evaluation)
+                    await repo.complete(session_id)
+                    evaluation_saved = True
+                    logger.info(f"Saved evaluation for session {session_id}")
+                    return True
+            except Exception as e:
+                last_error = e
+                logger.error(
+                    f"Evaluation save attempt {attempt}/{settings.evaluation_save_max_attempts} "
+                    f"failed for {session_id}: {e}"
+                )
+                if attempt < settings.evaluation_save_max_attempts:
+                    await asyncio.sleep(settings.evaluation_save_retry_delay_seconds)
+
+        await dead_letter_evaluation(
+            args,
+            f"db write failed after {settings.evaluation_save_max_attempts} attempts: {last_error}",
+        )
+        return False
 
     async def mark_incomplete():
         try:
@@ -255,23 +347,35 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
                                         )
                                         finalize_current_turn()
                                         args = call.args or {}
-                                        await save_evaluation(args)
+                                        saved = await save_evaluation(args)
 
-                                        await websocket.send_text(
-                                            json.dumps(
-                                                {
-                                                    "type": "interview_ended",
-                                                    "message": "Thank you! Your video presentation is now complete. You can end the session.",
-                                                }
+                                        if saved:
+                                            await websocket.send_text(
+                                                json.dumps(
+                                                    {
+                                                        "type": "interview_ended",
+                                                        "message": "Thank you! Your video presentation is now complete. You can end the session.",
+                                                    }
+                                                )
                                             )
-                                        )
+                                        else:
+                                            await websocket.send_text(
+                                                json.dumps(
+                                                    {
+                                                        "type": "interview_ended",
+                                                        "message": "Your session has ended, but we were unable to save your evaluation. Our team has been notified.",
+                                                    }
+                                                )
+                                            )
 
                                         await session.send_tool_response(
                                             function_responses=[
                                                 types.FunctionResponse(
                                                     id=call.id,
                                                     name="end_session",
-                                                    response={"status": "success"},
+                                                    response={
+                                                        "status": "success" if saved else "error"
+                                                    },
                                                 )
                                             ]
                                         )

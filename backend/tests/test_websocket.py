@@ -18,10 +18,25 @@ from fastapi.testclient import TestClient
 
 import app.api.websocket as websocket_route
 import app.interview.handler as handler
+from app.api.user_routes import limiter as login_limiter
 from app.config import settings
 from app.infrastructure.database import get_session
+from app.infrastructure.repositories import SessionRepository
 from app.main import app
 from tests.fakes.gemini import FakeLiveSession, end_session_call, make_fake_genai_client, user_transcript
+
+
+@pytest.fixture(autouse=True)
+def _reset_login_rate_limit():
+    """The /api/login limiter (app/api/user_routes.py) is a module-level
+    Limiter whose counters persist for the whole pytest process, keyed by a
+    remote address that's identical for every TestClient call ("testclient").
+    Without a reset, tests that each perform a real login (this file does,
+    repeatedly, to mint admin tokens) collectively exhaust the "5/minute"
+    quota partway through the suite depending on run order/count -- a
+    pre-existing test-isolation gap, not a change to the production limit."""
+    login_limiter.reset()
+    yield
 
 
 def _register_and_create_session(client, email):
@@ -490,5 +505,122 @@ def test_websocket_disconnect_mid_interview_marks_session_incomplete_with_partia
             user_entries = [e for e in body["transcript"] if e["role"] == "user"]
             assert len(user_entries) == 1
             assert user_entries[0]["text"] == "Hello, I have to go."
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
+def test_websocket_end_session_with_invalid_recommendation_never_reports_success(monkeypatch):
+    """B7 regression: before this fix, end_session always told the client and
+    Gemini "success" even when the tool-call args didn't match the schema
+    already declared in build_end_session_tool() (e.g. an out-of-enum
+    `recommendation`), and save_evaluation() silently swallowed the resulting
+    exception -- so a malformed args payload looked identical to a real save
+    but persisted nothing usable."""
+    provide_session = _make_session_provider()
+    app.dependency_overrides[get_session] = provide_session
+    monkeypatch.setattr(handler, "get_session", provide_session)
+    monkeypatch.setattr(websocket_route, "get_session", provide_session)
+    monkeypatch.setattr(settings, "admin_creation_secret", "test-admin-secret")
+
+    fake_session = FakeLiveSession(
+        responses=[
+            end_session_call(
+                {
+                    "applicant_notes": {},
+                    "overall_impression": "Looked promising",
+                    "recommendation": "definitely_hire",  # not a valid enum value
+                }
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        handler, "get_genai_client", lambda: make_fake_genai_client(fake_session)
+    )
+
+    try:
+        with TestClient(app) as client:
+            session_id, token = _register_and_create_session(
+                client, "bad-args@example.com"
+            )
+            admin_token = _admin_token(
+                client, "test-admin-secret", "bad-args-admin@example.com"
+            )
+
+            with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws:
+                status_msg = ws.receive_json()
+                assert status_msg["type"] == "status"
+
+                ended_msg = ws.receive_json()
+                assert ended_msg["type"] == "interview_ended"
+                assert "unable to save" in ended_msg["message"].lower()
+
+                body = _poll_session_status(client, session_id, admin_token)
+
+            assert body["status"] == "incomplete"
+            assert body["completed_at"] is None
+            assert body["evaluation"]["evaluation_save_failed"] is True
+            assert "invalid args" in body["evaluation"]["reason"].lower()
+            assert fake_session.tool_responses[0][0].response["status"] == "error"
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
+def test_websocket_end_session_dead_letters_after_persistent_db_failure(monkeypatch):
+    """B7 regression: a DB failure during the evaluation write must not be
+    reported to the client/Gemini as success, and must not be silently
+    dropped -- it should retry, then dead-letter the raw args so nothing is
+    lost, and mark the session incomplete."""
+    provide_session = _make_session_provider()
+    app.dependency_overrides[get_session] = provide_session
+    monkeypatch.setattr(handler, "get_session", provide_session)
+    monkeypatch.setattr(websocket_route, "get_session", provide_session)
+    monkeypatch.setattr(settings, "admin_creation_secret", "test-admin-secret")
+    monkeypatch.setattr(settings, "evaluation_save_max_attempts", 2)
+    monkeypatch.setattr(settings, "evaluation_save_retry_delay_seconds", 0.01)
+
+    async def always_fail_complete(self, session_id):
+        raise RuntimeError("simulated DB outage")
+
+    monkeypatch.setattr(SessionRepository, "complete", always_fail_complete)
+
+    fake_session = FakeLiveSession(
+        responses=[
+            end_session_call(
+                {
+                    "applicant_notes": {"q1_why_applying": "Because I love robotics"},
+                    "overall_impression": "Strong candidate",
+                    "recommendation": "recommended",
+                }
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        handler, "get_genai_client", lambda: make_fake_genai_client(fake_session)
+    )
+
+    try:
+        with TestClient(app) as client:
+            session_id, token = _register_and_create_session(
+                client, "db-outage@example.com"
+            )
+            admin_token = _admin_token(
+                client, "test-admin-secret", "db-outage-admin@example.com"
+            )
+
+            with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws:
+                status_msg = ws.receive_json()
+                assert status_msg["type"] == "status"
+
+                ended_msg = ws.receive_json()
+                assert ended_msg["type"] == "interview_ended"
+                assert "unable to save" in ended_msg["message"].lower()
+
+                body = _poll_session_status(client, session_id, admin_token)
+
+            assert body["status"] == "incomplete"
+            assert body["completed_at"] is None
+            assert body["evaluation"]["evaluation_save_failed"] is True
+            assert "db write failed after 2 attempts" in body["evaluation"]["reason"].lower()
+            assert fake_session.tool_responses[0][0].response["status"] == "error"
     finally:
         app.dependency_overrides.pop(get_session, None)

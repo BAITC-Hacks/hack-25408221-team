@@ -299,6 +299,65 @@ PART C of the spec. "Skipped" entries explain why; "Remaining" is filled in at t
   confirmed the pre-existing 10 pass unchanged after the schema/repository additions before
   writing the new handler.py logic, satisfying "run the test suite before and after").
 
+### B7 — Evaluation save robustness: a failed save was always reported as success
+
+- **Bug found, confirmed by reading the code:** in `app/interview/handler.py`'s `end_session`
+  tool-call handler, `await save_evaluation(args)` was called and then, unconditionally and
+  regardless of the outcome, the code sent the client an `interview_ended` message and Gemini a
+  `{"status": "success"}` tool response. `save_evaluation()` itself wrapped its whole body in a
+  bare `except Exception as e: logger.error(...)` with no re-raise and no return value — so a
+  malformed tool-call payload (e.g. `recommendation` outside the enum already declared in
+  `build_end_session_tool()`) or a transient DB error during the write both silently produced
+  *zero* persisted evaluation data while telling both the applicant and the model the save had
+  succeeded. This is exactly the Definition of Done's "a failed evaluation save is never reported
+  as success."
+- **Fix (validation, retry, honest branching, dead-letter — no new scoring, no schema-column
+  churn):**
+  - `validate_end_session_args()` checks the tool-call args against the *existing*
+    `build_end_session_tool()` schema already declared to Gemini (dict `applicant_notes`,
+    non-empty string `overall_impression`, `recommendation` in the same four-value enum already
+    declared to the model, numeric 1–10 `overall_score` if present, list-of-strings
+    `strengths`/`concerns` if present) and raises `ValueError` on the first mismatch. This
+    validates shape only — it does not add any new evaluation criteria or scoring logic.
+  - `save_evaluation()` now returns `bool`. On validation failure it dead-letters immediately
+    (no point retrying a payload that will never parse). On a valid payload, it retries the same
+    four repo calls (`update_transcript`, `update_applicant_data`, `update_evaluation`,
+    `complete`) — safe to retry as a whole because all four are pure overwrites, not new
+    "atomic" plumbing — up to `settings.evaluation_save_max_attempts` (default 3) times, sleeping
+    `settings.evaluation_save_retry_delay_seconds` (default 0.5s) between attempts. Both new
+    settings follow the existing `checkin_*` `Settings`/`.env.example` pattern from A3.
+  - On final failure (invalid args, or DB write failed after all retries), `dead_letter_evaluation()`
+    persists `{"evaluation_save_failed": True, "reason": ..., "raw_args": args}` into the
+    *existing* `evaluation` JSON column and calls the existing `mark_incomplete()` — deliberately
+    not adding a new `analysis_status` column/migration, to keep this a bug fix rather than a
+    schema change.
+  - The `end_session` tool-call handler now branches on `save_evaluation()`'s return value:
+    on success, the client/Gemini messages are byte-for-byte unchanged from before this fix; on
+    failure, the client gets an honest "we were unable to save your evaluation" message and
+    Gemini gets `{"status": "error"}` instead of a false `"success"`.
+- **New tests** in `tests/test_websocket.py`:
+  - `test_websocket_end_session_with_invalid_recommendation_never_reports_success` — an
+    out-of-enum `recommendation` results in an "unable to save" client message, session
+    `status: "incomplete"`, and a dead-letter marker (`evaluation_save_failed: true`, reason
+    containing `"invalid args"`) in the `evaluation` column, never `"completed"`.
+  - `test_websocket_end_session_dead_letters_after_persistent_db_failure` — monkeypatches
+    `SessionRepository.complete` to always raise, with `evaluation_save_max_attempts=2` and a
+    near-zero retry delay for test speed, and asserts the same never-reports-success outcome
+    after retries are exhausted, with the dead-letter reason naming the attempt count.
+  - Both needed one more test-harness-only fix, unrelated to the B7 logic itself: the
+    `/api/login` endpoint's `slowapi` rate limiter (`app/api/user_routes.py`) is a module-level
+    `Limiter` whose counters live for the entire pytest process and are keyed by a remote address
+    that's identical for every `TestClient` call. This file mints several admin tokens (each one
+    real login), and once the total logins across the file passed the "5/minute" quota, later
+    tests started getting `429`s from a *shared* counter that no test had ever reset. Added an
+    autouse `_reset_login_rate_limit` fixture in this file that calls `login_limiter.reset()`
+    before each test — a test-isolation fix, not a change to the production rate limit (that
+    limit itself is in scope for B14, not this task).
+- Test run: **before this task, 12 passed.** Ran once after the `handler.py` changes and before
+  writing new tests to confirm the pre-existing 12 still passed unchanged (satisfying "run the
+  test suite before and after"). **After adding the two new tests and the rate-limiter fixture:
+  14 passed**, confirmed stable across three consecutive full-suite runs.
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though
