@@ -1003,6 +1003,59 @@ recording, not to an unrelated server clock.
   - Frontend: untouched by this task (backend-only refactor); not re-verified since no frontend
     file was edited.
 
+### A6 — Scoring module seam (`ScorerInterface`) + wiring-only fixes
+
+1. **Duplicated ml-scoring wiring found at 3 call sites.** `admin_routes.py`'s
+   `admin_triage_queue`, `demo_routes.py`'s `demo_analyze`, and
+   `enhanced_analysis.py`'s `EnhancedAnalysisUseCase.execute` each called the same 6 functions
+   (`compute_data_quality_score`, `baseline_score_applicant`, `agreement_score`,
+   `detect_evaluation_inconsistencies`, `identify_edge_cases`, `compute_authenticity_score`) with
+   identical arguments and order. Confirmed via grep that none of the six mutate their inputs
+   (every `.append()` targets a locally-created list), so consolidating the call order/location
+   into one seam is behavior-preserving — no scoring algorithm was touched, satisfying "Do NOT
+   build new scoring."
+2. **`ScorerInterface` (new, in `app/domain/interfaces.py`).** A synchronous
+   `score_core(applicant_data, transcript, evaluation) -> dict` ABC method, following the same
+   ABC pattern as `UserRepositoryInterface`/`SessionRepositoryInterface` in the same file.
+   Deliberately synchronous (unlike those two) because the underlying ml functions are plain sync
+   calls — making it `async` would add no value and just force callers to `await` something that
+   never suspends.
+3. **`CoreScorer` (new, `app/ml/scorer.py`).** Calls the same 6 functions in the same order,
+   returning a canonical dict (`data_quality`, `baseline`, `agreement`, `inconsistencies`,
+   `edge_cases`, `authenticity`). These key names were chosen to match `admin_routes.py`'s
+   existing flat output dict 1:1; `demo_routes.py`/`enhanced_analysis.py` (which use
+   `baseline_evaluation` and a nested `error_analysis: {inconsistencies, edge_cases}` shape)
+   remap explicitly at their call sites so their exact existing JSON response shapes are
+   unchanged.
+4. **Three call sites refactored to the seam, zero response-shape changes.**
+   `admin_triage_queue`, `demo_analyze`, and `EnhancedAnalysisUseCase.execute` (which now takes a
+   `scorer: ScorerInterface` constructor parameter, wired up in `validation_routes.py`'s
+   `_get_enhanced_analysis_use_case` via `CoreScorer()`) all call
+   `scorer.score_core(applicant_data, transcript, evaluation)` once and destructure the 6 keys
+   instead of calling the functions inline. `demo_baseline` was left untouched — it's a single
+   `baseline_score_applicant` call, not duplicated wiring, so it's out of scope for the seam.
+5. **Small wiring-only fix: `admin_routes.py`'s hardcoded `valid_recs` literal.**
+   `admin_override_evaluation` had `{"strongly_recommended", "recommended", "needs_review",
+   "not_recommended"}` as a literal, duplicating the values already canonicalized in A5's
+   `Recommendation` enum (a gap A5's own verification grep missed, since that grep only checked
+   for status strings, not recommendation strings). Replaced with `{r.value for r in
+   Recommendation}`, matching the pattern already used in `app/interview/handler.py`'s
+   `VALID_RECOMMENDATIONS`.
+6. **Zero existing coverage found for the routes this task touches.** `admin_triage_queue`,
+   `demo_analyze`, and every `validation_routes.py` endpoint had no tests before this task
+   (confirmed via grep). Added `tests/test_scoring.py`: a unit test of `CoreScorer.score_core()`
+   (both with sample data and with all-`None` inputs), an HTTP test of `/api/demo/analyze`
+   asserting its nested `error_analysis`/`baseline_evaluation` response shape survived the
+   refactor, and an HTTP test of `/api/admin/triage` (using the `settings.admin_creation_secret`
+   monkeypatch + create-admin + login pattern already established in `test_websocket.py`)
+   asserting a scored session shows up in the tiered `queue` response.
+
+- **Verification:**
+  - Backend: full suite before and after: **35 passed → 39 passed** (35 + 4 new in
+    `tests/test_scoring.py`), no regressions.
+  - Frontend: untouched by this task (backend-only refactor); not re-verified since no frontend
+    file was edited.
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though

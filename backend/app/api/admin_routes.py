@@ -9,14 +9,11 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.config import settings
 from app.core.security import hash_password
 from app.core.auth import require_admin
+from app.domain.enums import Recommendation
 from app.infrastructure.database import get_session
 from app.infrastructure.models import UserTable
 from app.infrastructure.repositories import SessionRepository, UserRepository
-from app.ml.authenticity import compute_authenticity_score
-from app.ml.baseline import baseline_score_applicant
-from app.ml.data_quality import compute_data_quality_score
-from app.ml.error_analysis import detect_evaluation_inconsistencies, identify_edge_cases
-from app.ml.evaluation import agreement_score
+from app.ml.scorer import CoreScorer
 from app.ml.triage import compute_triage_queue
 from app.use_cases.user_use_cases import GetUserUseCase, ListUsersUseCase
 
@@ -152,6 +149,7 @@ async def admin_triage_queue(
 ):
     user_repo = UserRepository(db_session)
     session_repo = SessionRepository(db_session)
+    scorer = CoreScorer()
 
     users = await user_repo.list_all()
     items = []
@@ -165,13 +163,7 @@ async def admin_triage_queue(
         evaluation = session.evaluation
         transcript = session.transcript
 
-        data_quality = compute_data_quality_score(applicant_data, transcript, evaluation)
-        baseline = baseline_score_applicant(applicant_data)
-        ai_rec = (evaluation or {}).get("recommendation")
-        agr = agreement_score(ai_rec, baseline["recommendation"])
-        inconsistencies = detect_evaluation_inconsistencies(evaluation, applicant_data)
-        edge_cases = identify_edge_cases(transcript, applicant_data)
-        authenticity = compute_authenticity_score(applicant_data, transcript)
+        scores = scorer.score_core(applicant_data, transcript, evaluation)
 
         items.append({
             "session_id": session.id,
@@ -179,12 +171,12 @@ async def admin_triage_queue(
             "program": session.program,
             "evaluation": evaluation,
             "applicant_data": applicant_data,
-            "baseline": baseline,
-            "data_quality": data_quality,
-            "agreement": agr,
-            "edge_cases": edge_cases,
-            "inconsistencies": inconsistencies,
-            "authenticity": authenticity,
+            "baseline": scores["baseline"],
+            "data_quality": scores["data_quality"],
+            "agreement": scores["agreement"],
+            "edge_cases": scores["edge_cases"],
+            "inconsistencies": scores["inconsistencies"],
+            "authenticity": scores["authenticity"],
         })
 
     return compute_triage_queue(items)
@@ -220,7 +212,7 @@ async def admin_override_evaluation(
             detail="override_score, override_recommendation, and justification are required",
         )
 
-    valid_recs = {"strongly_recommended", "recommended", "needs_review", "not_recommended"}
+    valid_recs = {r.value for r in Recommendation}
     if override_recommendation not in valid_recs:
         raise HTTPException(
             status_code=400,

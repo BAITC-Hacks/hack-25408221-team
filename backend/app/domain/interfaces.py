@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from app.domain.entities import Session, SessionCreate, User, UserCreate
 
@@ -63,4 +63,19 @@ class SessionRepositoryInterface(ABC):
 
     @abstractmethod
     async def mark_incomplete(self, session_id: str) -> Session:
+        pass
+
+
+class ScorerInterface(ABC):
+    """The core bundle of ml-scoring calls shared by admin triage, the demo
+    endpoint, and enhanced-analysis metrics -- previously duplicated inline
+    at each of those three call sites."""
+
+    @abstractmethod
+    def score_core(
+        self,
+        applicant_data: Optional[Dict[str, Any]],
+        transcript: Optional[List[dict]],
+        evaluation: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
         pass

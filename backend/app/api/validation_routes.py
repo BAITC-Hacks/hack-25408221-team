@@ -8,6 +8,7 @@ from app.infrastructure.database import get_session
 from app.infrastructure.repositories import SessionRepository
 from app.ml.data_quality import compute_data_quality_score
 from app.ml.evaluation import compute_confidence_calibration, compute_score_distribution
+from app.ml.scorer import CoreScorer
 from app.use_cases.enhanced_analysis import EnhancedAnalysisUseCase
 
 logger = logging.getLogger(__name__)
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/api/metrics", tags=["validation"])
 
 
 def _get_enhanced_analysis_use_case(db_session: AsyncSession = Depends(get_session)):
-    return EnhancedAnalysisUseCase(SessionRepository(db_session))
+    return EnhancedAnalysisUseCase(SessionRepository(db_session), CoreScorer())
 
 
 @router.get("/sessions/{session_id}")

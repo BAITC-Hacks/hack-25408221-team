@@ -5,12 +5,9 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends
 
 from app.core.auth import get_current_user
-from app.ml.authenticity import compute_authenticity_score
 from app.ml.baseline import baseline_score_applicant
-from app.ml.data_quality import compute_data_quality_score
-from app.ml.error_analysis import detect_evaluation_inconsistencies, identify_edge_cases
-from app.ml.evaluation import agreement_score
 from app.ml.explainability import compute_feature_importance, explain_recommendation
+from app.ml.scorer import CoreScorer
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/demo", tags=["demo"])
@@ -64,35 +61,27 @@ async def demo_analyze(
     evaluation = payload.get("evaluation") or SAMPLE_EVALUATION
     transcript: Optional[List[dict]] = payload.get("transcript") or SAMPLE_TRANSCRIPT
 
-    data_quality = compute_data_quality_score(applicant_data, transcript, evaluation)
-    baseline = baseline_score_applicant(applicant_data)
-
-    ai_recommendation = (evaluation or {}).get("recommendation")
-    agreement = agreement_score(ai_recommendation, baseline["recommendation"])
-
-    inconsistencies = detect_evaluation_inconsistencies(evaluation, applicant_data)
-    edge_cases = identify_edge_cases(transcript, applicant_data)
+    scores = CoreScorer().score_core(applicant_data, transcript, evaluation)
+    baseline = scores["baseline"]
 
     explanation = explain_recommendation(evaluation, applicant_data, baseline)
     feature_importance = compute_feature_importance(applicant_data, evaluation)
 
-    authenticity = compute_authenticity_score(applicant_data, transcript)
-
     return {
         "note": "Demo analysis — results are not persisted",
         "used_sample_data": not bool(payload.get("applicant_data")),
-        "data_quality": data_quality,
+        "data_quality": scores["data_quality"],
         "baseline_evaluation": baseline,
-        "agreement": agreement,
+        "agreement": scores["agreement"],
         "error_analysis": {
-            "inconsistencies": inconsistencies,
-            "edge_cases": edge_cases,
+            "inconsistencies": scores["inconsistencies"],
+            "edge_cases": scores["edge_cases"],
         },
         "explainability": {
             "explanation": explanation,
             "feature_importance": feature_importance,
         },
-        "authenticity": authenticity,
+        "authenticity": scores["authenticity"],
     }
 
 

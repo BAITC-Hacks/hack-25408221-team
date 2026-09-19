@@ -2,12 +2,7 @@
 import logging
 from typing import Optional, Tuple
 
-from app.domain.interfaces import SessionRepositoryInterface
-from app.ml.authenticity import compute_authenticity_score
-from app.ml.baseline import baseline_score_applicant
-from app.ml.data_quality import compute_data_quality_score
-from app.ml.error_analysis import detect_evaluation_inconsistencies, identify_edge_cases
-from app.ml.evaluation import agreement_score
+from app.domain.interfaces import ScorerInterface, SessionRepositoryInterface
 from app.ml.explainability import compute_feature_importance, explain_recommendation
 from app.ml.iaf_scoring import compute_iaf_score
 from app.ml.language_proficiency import compute_language_proficiency
@@ -17,8 +12,9 @@ logger = logging.getLogger(__name__)
 
 
 class EnhancedAnalysisUseCase:
-    def __init__(self, session_repo: SessionRepositoryInterface):
+    def __init__(self, session_repo: SessionRepositoryInterface, scorer: ScorerInterface):
         self.session_repo = session_repo
+        self.scorer = scorer
 
     async def execute(self, session_id: str) -> Tuple[Optional[dict], Optional[str]]:
         session = await self.session_repo.get_by_id(session_id)
@@ -29,19 +25,17 @@ class EnhancedAnalysisUseCase:
         applicant_data = session.applicant_data
         evaluation = session.evaluation
 
-        data_quality = compute_data_quality_score(applicant_data, transcript, evaluation)
-        baseline = baseline_score_applicant(applicant_data)
-
-        ai_recommendation = (evaluation or {}).get("recommendation")
-        agreement = agreement_score(ai_recommendation, baseline["recommendation"])
-
-        inconsistencies = detect_evaluation_inconsistencies(evaluation, applicant_data)
-        edge_cases = identify_edge_cases(transcript, applicant_data)
+        scores = self.scorer.score_core(applicant_data, transcript, evaluation)
+        data_quality = scores["data_quality"]
+        baseline = scores["baseline"]
+        agreement = scores["agreement"]
+        inconsistencies = scores["inconsistencies"]
+        edge_cases = scores["edge_cases"]
+        authenticity = scores["authenticity"]
 
         explanation = explain_recommendation(evaluation, applicant_data, baseline)
         feature_importance = compute_feature_importance(applicant_data, evaluation)
 
-        authenticity = compute_authenticity_score(applicant_data, transcript)
         language_proficiency = compute_language_proficiency(transcript, applicant_data)
         iaf = compute_iaf_score(applicant_data, session.program)
         triage_priority = compute_priority_tier(evaluation, data_quality, agreement, edge_cases, inconsistencies.get("inconsistencies", []), authenticity)
