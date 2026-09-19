@@ -1056,6 +1056,49 @@ recording, not to an unrelated server clock.
   - Frontend: untouched by this task (backend-only refactor); not re-verified since no frontend
     file was edited.
 
+### A8 — Feature flags module (backend + frontend), all off by default
+
+1. **No SPEC text or prior precedent for this task beyond its title.** Confirmed via grep that no
+   dedicated SPEC file exists in the repo — the task list is a chat-only spec. Confirmed via
+   `NOTES.md` grep that there's no earlier feature-flags scaffolding to build on. Scope taken
+   literally: a minimal, symmetric on/off lookup, backend and frontend, defaulting to fully off.
+2. **Backend: `Settings.feature_flags` (new field), not raw `os.environ`.** `app/config.py`'s
+   `Settings` is a pydantic-settings `BaseSettings` with `model_config = {"env_file": ".env", ...}`
+   — its `.env`-file loading does **not** mutate `os.environ`, so a naive
+   `os.environ.get("FEATURE_FLAGS")` call would silently miss any flag set only in a local `.env`
+   file, inconsistent with every other config value in the app. Instead added
+   `feature_flags: str = ""` (comma-separated enabled-flag-names) directly to `Settings`, matching
+   how every other env-driven value in this app is read (A3's config-hygiene pattern).
+3. **`app/core/feature_flags.py` (new).** One function, `is_enabled(flag_name: str) -> bool`,
+   built on `settings.feature_flags`. Lookup is case- and whitespace-insensitive; no flag names
+   are hardcoded in the module — callers supply whatever name they choose. Empty string (the
+   default in every environment) means every flag is off.
+4. **Frontend: `lib/feature-flags.ts` (new), symmetric design.** `isFeatureEnabled(flagName)`
+   reads a comma-separated `NEXT_PUBLIC_FEATURE_FLAGS` env var (Next.js requires the
+   `NEXT_PUBLIC_` prefix for a var to reach client code, following the same convention as
+   `NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_WS_URL` already in `.env.example`), same case/whitespace
+   normalization as the backend. Not wired into any page/component this task — the task is the
+   module itself, not adopting it anywhere, since "Do NOT redesign the interview questions or
+   prompt this sprint" rules out gating existing UI behind a new flag speculatively.
+5. **No frontend unit test added, for the same already-flagged reason as B12/B8/B9/B11/B13/B10.**
+   `isFeatureEnabled` is pure, extractable logic, but this repo still has no test runner (no
+   jest/vitest/ts-node in `frontend/package.json`, no test script, confirmed again via full read of
+   the file). Adding one for a single pure function would be a disproportionate infra change for
+   this sprint's scope. Flagged as a real gap, not silently skipped — worth revisiting if/when a
+   frontend test runner is added (see A9 dead-code/tooling triage).
+6. **Both `.env.example` files updated.** `backend/.env.example` gets `FEATURE_FLAGS=` (empty,
+   matching `ADMIN_CREATION_SECRET=`'s style) with an explanatory comment; `frontend/.env.example`
+   gets `NEXT_PUBLIC_FEATURE_FLAGS=` likewise.
+
+- **Verification:**
+  - Backend: `tests/test_feature_flags.py` (4 new tests: off-by-default, enabling multiple flags,
+    case/whitespace insensitivity, empty-entries-ignored) — full suite before and after: **39
+    passed → 43 passed**, no regressions.
+  - Frontend: `pnpm exec tsc --noEmit` — zero new errors (same 2 pre-existing, unrelated errors as
+    every prior segment's baseline: `app/admin/applicant/[id]/page.tsx:1210` and
+    `app/apply/form/page.tsx:49,60`); confirmed `lib/feature-flags.ts` itself produces no errors.
+    No frontend unit test added — see finding 5 above.
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though

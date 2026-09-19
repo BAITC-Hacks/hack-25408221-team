@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     evaluation_save_max_attempts: int = 3
     evaluation_save_retry_delay_seconds: float = 0.5
 
+    # Feature flags (see app/core/feature_flags.py). Comma-separated flag
+    # names, e.g. "new_scoring_ui,beta_dashboard". Empty means every flag is
+    # off, which is the default in every environment.
+    feature_flags: str = ""
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
