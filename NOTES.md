@@ -639,6 +639,63 @@ initial Explore-agent survey), then fixed:
     dependency-array sequencing and a native browser event listener, not extractable pure logic,
     and there's no test runner in this repo (same carve-out as B9).
 
+### B11: Actionable typed error states in interview UI
+
+Confirmed by reading the code, then fixed. Task description: "Replace generic error with typed
+causes (mic denied, no device, camera denied w/ audio-only continuation, ws auth failure, session
+completed, server error, connection lost) mapped from server typed errors."
+
+1. **Server-sent error text was captured, then thrown away (frontend, the core bug).** Every
+   server-side rejection path (`backend/app/api/websocket.py`'s `_reject()` for auth/ownership/
+   not-found/already-completed, and `backend/app/interview/handler.py` for duplicate-connection and
+   internal errors) already sends a specific, human-readable `{"type": "error", "message": "..."}`
+   text frame before closing the socket with a matching code (4001/4003/4004/4008/4009). But
+   `use-interview-call.ts`'s `ws.onmessage` handler for `msg.type === "error"` did only
+   `setStatus("error")` — the `message` field was read off the parsed JSON and discarded. Every
+   distinct failure (wrong user, session already submitted, duplicate tab, missing API key,
+   internal exception) rendered as the same bare "Connection error" pill with no explanation and no
+   next step. Fixed by adding an `errorMessage` state, set from `msg.message` in that branch and
+   rendered in a new destructive `Alert` in `page.tsx` (gated on `status === "error" && errorMessage`).
+2. **`ws.onclose`/`ws.onerror` had no fallback for closes with no message (frontend).** A genuine
+   network drop or server crash never sends the `"error"` text frame — only `onclose` fires, with no
+   information captured. Fixed `ws.onclose` to classify by `event.code`: skip if a specific message
+   already arrived (checked via current `status`, since the message frame always precedes the close
+   frame so `status` is already `"error"` by the time `onclose` runs); otherwise use a
+   `CLOSE_CODE_MESSAGES` map for the known 4xxx codes as a backstop, or "Connection lost. Please
+   check your network and try again." for anything else while a call was `active`/`connecting`.
+   Moved all classification into `onclose` and left `onerror` a no-op, since browsers always fire
+   `close` after `error` for WebSocket and doing it in both places created a race where `onerror`
+   could mark `status` `"error"` before `onclose` had a chance to attach the actual message.
+3. **Camera-permission-denial was unhandled (frontend, matches "camera denied w/ audio-only
+   continuation").** `use-media-permissions.ts` only set `noCamera` for `NotFoundError`/
+   `DevicesNotFoundError`/`NotReadableError` on the video `getUserMedia` call. A user who denied the
+   camera permission prompt specifically got `NotAllowedError`, which neither the `micDenied` nor
+   `noCamera` branch matched — no state was set, no audio-only fallback triggered, no message shown.
+   Added a distinct `cameraDenied` state for this case (same audio-only fallback as `noCamera`, but
+   a different message: allowing camera access in settings fixes it, whereas `noCamera`'s device
+   issue would not be fixed by a permission grant). Also removed a stray `setNoCamera(true)` in
+   `use-interview-call.ts`'s `startPresentation` that ran whenever `!media.hasVideo` regardless of
+   cause — it was overwriting `checkMediaPermissions`'s own, more specific `noCamera`/`cameraDenied`
+   distinction every time.
+4. **Local getUserMedia/socket failures inside `ws.onopen` had no message.** The `catch` block
+   around the post-connect `getUserMedia`/`AudioWorklet` setup only did `setStatus("error")`. Added
+   an `errorMessage` there too ("Could not start your camera or microphone...").
+5. **mic denied / no camera device** were already handled with dedicated, actionable `Alert`s in
+   `page.tsx` before this fix — confirmed by reading, no fix needed for those two specifically.
+
+- **Verification:**
+  - No backend changes — full suite re-run to confirm unaffected: **23 passed** (unchanged from B8).
+  - Frontend: `npx tsc --noEmit` — zero new errors (same 2 pre-existing, unrelated errors as B8's
+    baseline; grepped the output for the touched files specifically — no matches). `npx next build`
+    — compiles, same route shapes as before.
+  - No new frontend unit test: the `CLOSE_CODE_MESSAGES` map is genuinely pure/extractable logic
+    (unlike B8/B9's browser-event-sequencing fixes), but there is still no test runner in this repo
+    (no jest/vitest/ts-node in `package.json`, no test script) — adding one for a single lookup map
+    would be a disproportionate infra change for this sprint's scope. Manually verified the mapping
+    against the server's actual close codes by re-reading `websocket.py`/`handler.py` directly.
+    Flagged as a real gap, not silently skipped — worth revisiting if/when a frontend test runner is
+    added (see A9 dead-code/tooling triage).
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though

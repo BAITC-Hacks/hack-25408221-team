@@ -8,6 +8,18 @@ export type CallStatus = "idle" | "connecting" | "active" | "ended" | "error"
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 const TOTAL_QUESTIONS = 6
 
+// Fallback copy for an abnormal close that arrives with no preceding "error"
+// message frame. In the normal case the server (websocket.py/handler.py)
+// always sends a specific message before closing with one of these codes,
+// so this map is only ever a backstop, not the primary source of truth.
+const CLOSE_CODE_MESSAGES: Record<number, string> = {
+  4001: "Your session expired or you're not signed in. Please sign in again.",
+  4003: "You do not have access to this interview session.",
+  4004: "This interview session could not be found.",
+  4008: "This interview already has an active connection open elsewhere.",
+  4009: "This interview has already been completed.",
+}
+
 /** Owns session creation, the Gemini Live websocket, audio capture/playback,
  * on-device recording, and the interview timer. */
 export function useInterviewCall(userId: string | null) {
@@ -20,12 +32,18 @@ export function useInterviewCall(userId: string | null) {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [creatingSession, setCreatingSession] = useState(false)
   const [sessionError, setSessionError] = useState("")
+  // Populated from the server's typed "error" message, a ws close code, or a
+  // local getUserMedia/socket failure -- the human-readable cause shown
+  // alongside status === "error", instead of a bare "Connection error" pill.
+  const [errorMessage, setErrorMessage] = useState("")
 
   const {
     micDenied,
     setMicDenied,
     noCamera,
     setNoCamera,
+    cameraDenied,
+    setCameraDenied,
     checkingMedia,
     audioOnly,
     setAudioOnly,
@@ -236,6 +254,7 @@ export function useInterviewCall(userId: string | null) {
     setHasRecording(false)
     setShowCheckIn(false)
     setCurrentQuestion(0)
+    setErrorMessage("")
     recordedBlobRef.current = null
     chunksRef.current = []
     setStatus("connecting")
@@ -254,8 +273,10 @@ export function useInterviewCall(userId: string | null) {
       return
     }
     if (!media.hasVideo) {
+      // checkMediaPermissions already set noCamera or cameraDenied,
+      // distinguishing "no device" from "permission denied" -- just add the
+      // audio-only fallback on top, don't stomp that distinction here.
       setAudioOnly(true)
-      setNoCamera(true)
     }
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
@@ -324,6 +345,7 @@ export function useInterviewCall(userId: string | null) {
         startTimer()
         setStatus("active")
       } catch (err: unknown) {
+        setErrorMessage("Could not start your camera or microphone. Please check permissions and try again.")
         setStatus("error")
         ws.close()
       }
@@ -351,6 +373,11 @@ export function useInterviewCall(userId: string | null) {
             // for the turn that just got cut off instead of talking over them.
             flushPlayback()
           } else if (msg.type === "error") {
+            // Server always sends this before closing (auth failure, ownership
+            // mismatch, already-completed, duplicate connection, internal
+            // error, etc.) -- surface its actual message instead of a
+            // generic status.
+            setErrorMessage(msg.message || "An unexpected error occurred.")
             setStatus("error")
           } else if (msg.type === "interview_ended") {
             setShowCheckIn(false)
@@ -363,14 +390,29 @@ export function useInterviewCall(userId: string | null) {
       }
     }
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       stopTimer()
       stopCapture()
-      setStatus((s) => (s === "active" || s === "connecting" ? "ended" : s))
+      setStatus((s) => {
+        // A specific cause already arrived via the "error" message above --
+        // don't stomp it with a generic one. The message frame always
+        // precedes the close frame, so by the time this fires `s` already
+        // reflects that update.
+        if (s === "ended" || s === "error") return s
+        if (s === "active" || s === "connecting") {
+          setErrorMessage(
+            CLOSE_CODE_MESSAGES[event.code] ||
+              "Connection lost. Please check your network and try again.",
+          )
+          return "error"
+        }
+        return s
+      })
     }
 
     ws.onerror = () => {
-      setStatus("error")
+      // onclose always follows and carries the close code, which is what we
+      // need to classify the failure -- nothing to add here.
     }
   }, [startTimer, stopTimer, playPCM, flushPlayback, endSession, stopCapture, createSession, checkMediaPermissions, playCheckInSound, setMicDenied, setAudioOnly, setNoCamera])
 
@@ -389,8 +431,10 @@ export function useInterviewCall(userId: string | null) {
     sessionId,
     creatingSession,
     sessionError,
+    errorMessage,
     micDenied,
     noCamera,
+    cameraDenied,
     checkingMedia,
     audioOnly,
     checkMediaPermissions,

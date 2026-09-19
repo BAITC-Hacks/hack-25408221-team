@@ -3,6 +3,11 @@ import { useCallback, useState } from "react"
 export function useMediaPermissions() {
   const [micDenied, setMicDenied] = useState(false)
   const [noCamera, setNoCamera] = useState(false)
+  // Distinct from noCamera: the device exists but the user explicitly
+  // denied the permission prompt for it. Same audio-only fallback, but the
+  // fix ("check your OS/browser permission settings") is different from a
+  // missing/unreadable device, so the UI calls it out separately.
+  const [cameraDenied, setCameraDenied] = useState(false)
   const [checkingMedia, setCheckingMedia] = useState(false)
   const [audioOnly, setAudioOnly] = useState(false)
 
@@ -10,6 +15,7 @@ export function useMediaPermissions() {
     setCheckingMedia(true)
     setMicDenied(false)
     setNoCamera(false)
+    setCameraDenied(false)
 
     let hasAudio = false
     let hasVideo = false
@@ -31,7 +37,9 @@ export function useMediaPermissions() {
       videoStream.getTracks().forEach((t) => t.stop())
     } catch (err: unknown) {
       const name = err instanceof Error ? err.name : ""
-      if (name === "NotFoundError" || name === "DevicesNotFoundError" || name === "NotReadableError") {
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        setCameraDenied(true)
+      } else if (name === "NotFoundError" || name === "DevicesNotFoundError" || name === "NotReadableError") {
         setNoCamera(true)
       }
     }
@@ -45,6 +53,8 @@ export function useMediaPermissions() {
     setMicDenied,
     noCamera,
     setNoCamera,
+    cameraDenied,
+    setCameraDenied,
     checkingMedia,
     audioOnly,
     setAudioOnly,

@@ -30,8 +30,10 @@ export default function VideoPresentationPage() {
     sessionId,
     creatingSession,
     sessionError,
+    errorMessage,
     micDenied,
     noCamera,
+    cameraDenied,
     checkingMedia,
     audioOnly,
     checkMediaPermissions,
@@ -319,6 +321,17 @@ export default function VideoPresentationPage() {
             </Alert>
           )}
 
+          {cameraDenied && !micDenied && (
+            <Alert>
+              <Video className="h-4 w-4" />
+              <AlertTitle>Camera access denied</AlertTitle>
+              <AlertDescription>
+                The interview will continue in audio-only mode. To be seen on camera, allow
+                camera access in your browser settings and refresh the page.
+              </AlertDescription>
+            </Alert>
+          )}
+
           {checkingMedia && (
             <Alert>
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -331,6 +344,14 @@ export default function VideoPresentationPage() {
               <AlertCircle className="h-4 w-4" />
               <AlertTitle>Session Error</AlertTitle>
               <AlertDescription>{sessionError}</AlertDescription>
+            </Alert>
+          )}
+
+          {status === "error" && errorMessage && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Interview interrupted</AlertTitle>
+              <AlertDescription>{errorMessage}</AlertDescription>
             </Alert>
           )}
 
