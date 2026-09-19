@@ -358,6 +358,66 @@ PART C of the spec. "Skipped" entries explain why; "Remaining" is filled in at t
   test suite before and after"). **After adding the two new tests and the rate-limiter fixture:
   14 passed**, confirmed stable across three consecutive full-suite runs.
 
+### B1 — Fix dead silence monitor + suppress check-ins during agent speech
+
+- **Bug found, confirmed by reading the code (backend) plus a targeted read of the frontend
+  audio path:** in `app/interview/handler.py`, `forward_to_gemini()` reset
+  `last_user_speech = datetime.now(timezone.utc)` and `check_in_count = 0` on *every single*
+  binary websocket message received from the client (`async for data in websocket.iter_bytes()`),
+  with no check on content. `frontend/app/apply/interview/page.tsx` feeds a raw 16kHz PCM stream
+  from an `AudioWorkletNode` (`frontend/public/pcm-processor.js`) that fires on every ~8ms
+  audio-render quantum with no amplitude/VAD gating — so audio chunks arrive constantly for the
+  entire time the mic is open, silence included, and even during the agent's own TTS playback
+  (the mic stays hot; only `echoCancellation: true` mitigates). That means `last_user_speech` was
+  effectively always "now," `silence_duration` could never accumulate past `CHECK_IN_INTERVAL` in
+  practice, and the check-in mechanism was structurally dead — it could not fire regardless of
+  actual user inactivity. Separately, there was no "agent is speaking" state anywhere (frontend or
+  backend), so even if the monitor had worked, it would have been free to check in on the user
+  during the agent's own turn, which is expected silence, not inactivity.
+  - Considered and deliberately rejected: driving the fix off the Live API's
+    `voice_activity`/`voice_activity_detection_signal` fields. Confirmed via direct inspection of
+    the installed `google-genai==1.70.0` package that these fields exist on
+    `types.LiveServerMessage`, but the SDK's own field description marks
+    `voice_activity_detection_signal` "Allowlisted only" — it may not be populated for this
+    project's API tier, which would make a fix built on it silently a no-op. Used only signals
+    already proven to work in this codebase instead: `sc.input_transcription.text` (real user
+    speech, backed by Gemini's own server-side VAD — `automatic_activity_detection` is already
+    enabled in `build_live_connect_config()`), `sc.model_turn` (agent producing audio), and
+    `sc.turn_complete` (agent's turn ending).
+- **Fix (signal swap, no new scoring, no prompt changes):**
+  - Renamed `last_user_speech` → `last_activity`: it now means "start of the current window during
+    which it's the user's turn to speak and they haven't yet," not "last time raw bytes arrived."
+  - Added `agent_speaking: bool`, `False` initially, `True` whenever `sc.model_turn` is present,
+    `False` again once `sc.turn_complete` fires.
+  - Removed the blind per-chunk reset from `forward_to_gemini()` — raw bytes reaching the server
+    are no longer treated as evidence of speech.
+  - `last_activity` now resets in exactly two places: when `sc.input_transcription.text` is
+    non-empty (confirmed real speech), and when `sc.turn_complete` fires (the agent just finished
+    talking, so a fresh "waiting for the user" window starts).
+  - `silence_monitor()` skips its check-in logic entirely for a cycle whenever `agent_speaking` is
+    `True` — directly implements "suppress check-ins during agent speech."
+- **New tests** in `tests/test_websocket.py`:
+  - `test_silence_monitor_fires_despite_continuous_audio_with_no_real_speech` — sends continuous
+    raw audio bytes (mirroring the real frontend's VAD-less stream) with no scripted user speech
+    ever transcribed, and asserts a `check_in` message still arrives. Verified this is a real
+    regression test, not a vacuous one: temporarily reverted just `handler.py` (`git stash push
+    --keep-index -- app/interview/handler.py`) and re-ran it against the pre-fix code — it failed
+    with "no check_in arrived despite continuous silence," then re-ran clean after popping the
+    stash back.
+  - `test_silence_monitor_suppresses_check_in_while_agent_is_speaking` — scripts a `model_turn`
+    response with no following `turn_complete` (so `agent_speaking` stays `True` indefinitely) and
+    asserts no `check_in` ever arrives. Same before/after verification: against the pre-fix code
+    this failed with `DID NOT RAISE queue.Empty` (log showed `Check-in 1/1` actually being sent),
+    then passed clean after restoring the fix.
+  - Both tests read from Starlette's `WebSocketTestSession._send_queue` directly with a bounded
+    `queue.Queue.get(timeout=...)` instead of `ws.receive_json()`, because `receive_json()` blocks
+    on the same queue with no timeout — if a fix regresses (a message that should arrive never
+    does, or vice versa), an un-timed-out call would hang the test indefinitely instead of failing
+    cleanly. This is test-harness-only; production code is untouched by it.
+- Test run: **before this task, 14 passed** (from B7). Ran the full suite once right after the
+  `handler.py` changes and before writing any new test, confirming the pre-existing 14 still
+  passed unchanged. **After adding the two new tests: 16 passed.**
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though

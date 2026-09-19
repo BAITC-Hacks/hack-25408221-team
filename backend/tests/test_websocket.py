@@ -8,6 +8,8 @@ event loops and blow up, so this test builds its own engine and never touches
 those fixtures.
 """
 
+import json
+import queue
 import time
 
 import pytest
@@ -23,7 +25,16 @@ from app.config import settings
 from app.infrastructure.database import get_session
 from app.infrastructure.repositories import SessionRepository
 from app.main import app
-from tests.fakes.gemini import FakeLiveSession, end_session_call, make_fake_genai_client, user_transcript
+from tests.fakes.gemini import (
+    FakeLiveSession,
+    FakeLiveResponse,
+    FakeModelTurn,
+    FakePart,
+    FakeServerContent,
+    end_session_call,
+    make_fake_genai_client,
+    user_transcript,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -622,5 +633,133 @@ def test_websocket_end_session_dead_letters_after_persistent_db_failure(monkeypa
             assert body["evaluation"]["evaluation_save_failed"] is True
             assert "db write failed after 2 attempts" in body["evaluation"]["reason"].lower()
             assert fake_session.tool_responses[0][0].response["status"] == "error"
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
+def _receive_json_no_hang(ws, timeout):
+    """Starlette's WebSocketTestSession.receive_json() blocks on a plain
+    queue.Queue.get() with no timeout -- if a message never arrives (exactly
+    the failure mode these two regression tests exist to catch), that call
+    hangs forever instead of failing. Reach into the same queue the real
+    receive() reads from, but with a bounded wait."""
+    message = ws._send_queue.get(timeout=timeout)
+    if isinstance(message, BaseException):
+        raise message
+    return json.loads(message["text"])
+
+
+def _send_audio_until(ws, predicate, overall_timeout, poll_interval=0.02):
+    """Simulates the frontend's continuous, VAD-less mic stream (see
+    frontend/public/pcm-processor.js -- it fires on every audio-render
+    quantum with no amplitude gating) by sending raw bytes in a tight loop,
+    while polling for a message matching `predicate` in between sends.
+    Returns the first matching message, or None if `overall_timeout` elapses
+    first."""
+    deadline = time.time() + overall_timeout
+    while time.time() < deadline:
+        ws.send_bytes(b"\x00\x00\x00\x00")
+        try:
+            message = ws._send_queue.get(timeout=poll_interval)
+        except queue.Empty:
+            continue
+        if isinstance(message, BaseException):
+            raise message
+        payload = json.loads(message["text"])
+        if predicate(payload):
+            return payload
+    return None
+
+
+def test_silence_monitor_fires_despite_continuous_audio_with_no_real_speech(monkeypatch):
+    """B1 regression: before this fix, forward_to_gemini() reset the silence
+    timer on every raw audio chunk received from the client, with no regard
+    for whether it contained speech. Since the frontend streams PCM
+    continuously (no VAD gating) for as long as the mic is open, the timer
+    was effectively always "now" and the check-in could never fire -- the
+    monitor was structurally dead. This test sends continuous audio, exactly
+    like the real frontend does, with no scripted user speech ever
+    transcribed, and asserts a check-in still arrives."""
+    provide_session = _make_session_provider()
+    app.dependency_overrides[get_session] = provide_session
+    monkeypatch.setattr(handler, "get_session", provide_session)
+    monkeypatch.setattr(websocket_route, "get_session", provide_session)
+    monkeypatch.setattr(handler, "CHECK_IN_INTERVAL", 0.1)
+    monkeypatch.setattr(handler, "CHECK_IN_WAIT", 0.1)
+    monkeypatch.setattr(handler, "MAX_CHECK_INS", 1)
+
+    fake_session = FakeLiveSession(responses=[], hang_when_exhausted=True)
+    monkeypatch.setattr(
+        handler, "get_genai_client", lambda: make_fake_genai_client(fake_session)
+    )
+
+    try:
+        with TestClient(app) as client:
+            session_id, token = _register_and_create_session(
+                client, "continuous-audio@example.com"
+            )
+
+            with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws:
+                status_msg = _receive_json_no_hang(ws, timeout=2)
+                assert status_msg["type"] == "status"
+
+                check_in_msg = _send_audio_until(
+                    ws, lambda m: m["type"] == "check_in", overall_timeout=3
+                )
+                assert check_in_msg is not None, (
+                    "no check_in arrived despite continuous silence -- the "
+                    "monitor is still being fooled by raw audio bytes"
+                )
+
+                ws.close(1000)
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
+def test_silence_monitor_suppresses_check_in_while_agent_is_speaking(monkeypatch):
+    """B1 regression: before this fix, there was no notion of "the agent is
+    currently talking" anywhere -- the monitor would happily check in on the
+    user for staying silent while the agent's own turn was still playing out,
+    which is expected silence, not inactivity. Scripts a model_turn with no
+    matching turn_complete (so agent_speaking stays True indefinitely) and
+    asserts no check-in ever arrives, no matter how long the user is quiet."""
+    provide_session = _make_session_provider()
+    app.dependency_overrides[get_session] = provide_session
+    monkeypatch.setattr(handler, "get_session", provide_session)
+    monkeypatch.setattr(websocket_route, "get_session", provide_session)
+    monkeypatch.setattr(handler, "CHECK_IN_INTERVAL", 0.05)
+    monkeypatch.setattr(handler, "CHECK_IN_WAIT", 0.05)
+    monkeypatch.setattr(handler, "MAX_CHECK_INS", 1)
+
+    fake_session = FakeLiveSession(
+        responses=[
+            FakeLiveResponse(
+                server_content=FakeServerContent(
+                    model_turn=FakeModelTurn(
+                        parts=[FakePart(text="Tell me about yourself...")]
+                    )
+                )
+            )
+        ],
+        hang_when_exhausted=True,
+    )
+    monkeypatch.setattr(
+        handler, "get_genai_client", lambda: make_fake_genai_client(fake_session)
+    )
+
+    try:
+        with TestClient(app) as client:
+            session_id, token = _register_and_create_session(
+                client, "agent-speaking@example.com"
+            )
+
+            with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws:
+                status_msg = _receive_json_no_hang(ws, timeout=2)
+                assert status_msg["type"] == "status"
+
+                with pytest.raises(queue.Empty):
+                    _receive_json_no_hang(ws, timeout=0.4)
+
+                ws.close(1000)
     finally:
         app.dependency_overrides.pop(get_session, None)

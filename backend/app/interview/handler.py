@@ -111,7 +111,15 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
     transcript: List[dict] = []
     current_turn: Optional[dict] = None
     session_start = datetime.now(timezone.utc)
-    last_user_speech = session_start
+    # Marks the start of the current "waiting for the user" window: reset
+    # whenever the user is confirmed to have spoken (input_transcription) and
+    # whenever the agent finishes a turn (turn_complete) -- so silence is only
+    # measured for the period where it's actually the user's turn to talk.
+    last_activity = session_start
+    # True while the agent's own audio is streaming to the client. The user
+    # is expected to be listening, not talking, during this window, so the
+    # silence monitor must not check in on them for it.
+    agent_speaking = False
     check_in_count = 0
     session_ended = False
     evaluation_saved = False
@@ -140,14 +148,18 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
         }
 
     async def silence_monitor():
-        nonlocal last_user_speech, check_in_count, session_ended
+        nonlocal last_activity, check_in_count, session_ended
         while not session_ended:
             try:
                 await asyncio.sleep(CHECK_IN_INTERVAL)
                 if session_ended:
                     break
+                if agent_speaking:
+                    # It's the agent's turn to talk, not the user's -- silence
+                    # from the user right now is expected, not inactivity.
+                    continue
                 silence_duration = (
-                    datetime.now(timezone.utc) - last_user_speech
+                    datetime.now(timezone.utc) - last_activity
                 ).total_seconds()
                 if (
                     silence_duration >= CHECK_IN_INTERVAL
@@ -289,11 +301,13 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
             silence_task = asyncio.create_task(silence_monitor())
 
             async def forward_to_gemini():
-                nonlocal last_user_speech, check_in_count
                 try:
                     async for data in websocket.iter_bytes():
-                        last_user_speech = datetime.now(timezone.utc)
-                        check_in_count = 0
+                        # NOTE: this only proves audio bytes reached the server,
+                        # not that the user said anything -- the browser streams
+                        # continuously regardless of silence (see pcm-processor.js).
+                        # Real speech evidence is handled in forward_from_gemini
+                        # via input_transcription, using Gemini's own VAD.
                         await session.send_realtime_input(
                             audio=types.Blob(
                                 data=data, mime_type="audio/pcm;rate=16000"
@@ -303,7 +317,7 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
                     logger.info("Client disconnected (send path)")
 
             async def forward_from_gemini():
-                nonlocal session_ended
+                nonlocal session_ended, last_activity, agent_speaking, check_in_count
                 try:
                     while True:
                         async for response in session.receive():
@@ -318,6 +332,10 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
                                         "user", sc.input_transcription.text
                                     )
                                     logger.info(f"User: {sc.input_transcription.text}")
+                                    # Confirmed evidence (Gemini's own VAD +
+                                    # transcription) that the user just spoke.
+                                    last_activity = datetime.now(timezone.utc)
+                                    check_in_count = 0
 
                                 if (
                                     sc.output_transcription
@@ -329,8 +347,13 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
 
                                 if sc.turn_complete:
                                     finalize_current_turn()
+                                    # Agent's turn just ended -- start a fresh
+                                    # "waiting for the user" window from now.
+                                    agent_speaking = False
+                                    last_activity = datetime.now(timezone.utc)
 
                                 if sc.model_turn:
+                                    agent_speaking = True
                                     for part in sc.model_turn.parts:
                                         if part.inline_data and part.inline_data.data:
                                             await websocket.send_bytes(
