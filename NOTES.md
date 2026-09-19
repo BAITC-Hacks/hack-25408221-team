@@ -148,6 +148,43 @@ PART C of the spec. "Skipped" entries explain why; "Remaining" is filled in at t
   confirmed the existing 5 pass unchanged with the new package layout before writing the new
   test, satisfying "run the test suite before and after").
 
+### B2 — Session ownership + status check on WebSocket connect
+
+- **Bug found (critical, pre-existing), confirmed by reading the code, not just inspection:**
+  `websocket_endpoint` authenticated the *token* (who you are) but never checked it against
+  the *session_id* in the URL (whose session this is). Any logged-in user could open
+  `/ws/{any_session_id}` for a session they don't own — including one that already has a
+  submitted evaluation — and the interview would run and overwrite that session's
+  `transcript`/`applicant_data`/`evaluation`/`completed_at` via `save_evaluation`. This is
+  both an authorization bug (cross-account data access) and a data-integrity bug (a completed
+  submission could be silently clobbered by a second run).
+- **Fix:** after token auth succeeds, `websocket.py` now loads the session via
+  `SessionRepository.get_by_id` and rejects the connection before ever calling
+  `run_interview_session`:
+  - session doesn't exist -> close code `4004`, "Session not found"
+  - `session.user_id != token's sub` -> close code `4003`, "You do not have access to this
+    session"
+  - `session.completed_at is not None` -> close code `4009`, "This interview has already been
+    completed"
+  - Each rejection sends the same `{"type": "error", "message": ...}` shape the client already
+    handles for the existing token-auth-failure paths (`4001`), so the frontend doesn't need a
+    new message format to at least surface *something* — a typed per-code UI (B11) is still
+    later work.
+- **New tests** in `tests/test_websocket.py`:
+  - `test_websocket_rejects_connection_to_another_users_session`: registers an owner and an
+    unrelated "intruder" user, creates a session for the owner, and asserts the intruder's
+    websocket connection gets the `error`/access-denied message and then closes.
+  - `test_websocket_rejects_connection_to_completed_session`: drives one real interview to
+    completion through the websocket (reusing the scripted fake Gemini session from the A4
+    test), then asserts a second connection attempt to that same, now-completed session_id is
+    rejected with the "already been completed" message.
+  - Both new tests, and the existing A4 websocket test, needed one more monkeypatch than
+    before: `app.api.websocket.get_session` (previously only `app.interview.handler.get_session`
+    was patched). The new ownership check calls `get_session()` directly from the route module,
+    which — like `handler.py`'s direct call — bypasses `app.dependency_overrides` entirely
+    since that only intercepts FastAPI `Depends(...)` resolution, not a plain function call.
+- Test run: **before this task, 6 passed.** **After: 8 passed** (adds the two tests above).
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though
