@@ -506,6 +506,85 @@ def test_websocket_rejects_second_concurrent_connection_to_same_session(monkeypa
         app.dependency_overrides.pop(get_session, None)
 
 
+def test_record_connect_attempt_blocks_after_max_within_window(monkeypatch):
+    """B14: each websocket connect opens a brand-new billable Gemini Live
+    session -- nothing previously stopped unlimited rapid reconnects to one
+    interview session."""
+    monkeypatch.setattr(handler, "_connect_attempts", {})
+    monkeypatch.setattr(handler, "MAX_CONNECT_ATTEMPTS", 3)
+    monkeypatch.setattr(handler, "CONNECT_ATTEMPT_WINDOW_SECONDS", 600)
+
+    session_id = "sess-throttle-test"
+    assert handler._record_connect_attempt(session_id) is True
+    assert handler._record_connect_attempt(session_id) is True
+    assert handler._record_connect_attempt(session_id) is True
+    assert handler._record_connect_attempt(session_id) is False
+    assert handler._record_connect_attempt(session_id) is False
+
+    other_session_id = "sess-throttle-test-2"
+    assert handler._record_connect_attempt(other_session_id) is True
+
+
+def test_record_connect_attempt_ignores_attempts_outside_window(monkeypatch):
+    monkeypatch.setattr(handler, "_connect_attempts", {})
+    monkeypatch.setattr(handler, "MAX_CONNECT_ATTEMPTS", 1)
+    monkeypatch.setattr(handler, "CONNECT_ATTEMPT_WINDOW_SECONDS", 600)
+
+    session_id = "sess-window-test"
+    handler._connect_attempts[session_id] = [time.monotonic() - 700]
+    assert handler._record_connect_attempt(session_id) is True
+
+
+def test_websocket_rejects_connect_attempt_over_the_limit(monkeypatch):
+    """B14 regression: the Nth+1 reconnect to the same session within the
+    window gets a clear error and a dedicated close code instead of silently
+    opening yet another Gemini Live session."""
+    monkeypatch.setattr(handler, "_connect_attempts", {})
+    monkeypatch.setattr(handler, "MAX_CONNECT_ATTEMPTS", 1)
+    monkeypatch.setattr(handler, "CONNECT_ATTEMPT_WINDOW_SECONDS", 600)
+    monkeypatch.setattr(settings, "admin_creation_secret", "test-admin-secret")
+
+    provide_session = _make_session_provider()
+    app.dependency_overrides[get_session] = provide_session
+    monkeypatch.setattr(handler, "get_session", provide_session)
+    monkeypatch.setattr(websocket_route, "get_session", provide_session)
+
+    fake_session = FakeLiveSession(responses=[], hang_when_exhausted=True)
+    monkeypatch.setattr(
+        handler, "get_genai_client", lambda: make_fake_genai_client(fake_session)
+    )
+
+    try:
+        with TestClient(app) as client:
+            session_id, token = _register_and_create_session(
+                client, "reconnect-spam@example.com"
+            )
+            admin_token = _admin_token(
+                client, "test-admin-secret", "reconnect-spam-admin@example.com"
+            )
+
+            with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws1:
+                status_msg = ws1.receive_json()
+                assert status_msg["type"] == "status"
+
+                # Close from inside the `with` block and poll (also from
+                # inside it) until the server's own disconnect cleanup has
+                # actually finished -- see _poll_session_status's docstring.
+                # Reconnecting before that finishes races the first
+                # connection's teardown against the second connection's own
+                # DB access and intermittently corrupts the shared in-memory
+                # sqlite connection (surfaces as "no such table: sessions").
+                ws1.close(1000)
+                _poll_session_status(client, session_id, admin_token)
+
+            with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws2:
+                error_msg = ws2.receive_json()
+                assert error_msg["type"] == "error"
+                assert "too many connection attempts" in error_msg["message"].lower()
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
 def _poll_session_status(client, session_id, admin_token, attempts=40, interval=0.05):
     """Starlette's TestClient forcibly cancels the server-side task shortly
     after the `with websocket_connect(...)` block exits, with no guarantee

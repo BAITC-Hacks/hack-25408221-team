@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     # off, which is the default in every environment.
     feature_flags: str = ""
 
+    # Live-interview connect-attempt throttling (see app/interview/handler.py).
+    # Each websocket connect opens a brand-new billable Gemini Live session, so
+    # unlimited reconnects to one interview session would be an open-ended cost
+    # and abuse vector.
+    max_connect_attempts_per_session: int = 8
+    connect_attempt_window_seconds: int = 600
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

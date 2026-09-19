@@ -1131,6 +1131,58 @@ own definition and tests.
 Not included: this sprint's own `isFeatureEnabled()` (A8) — unused today by design (a
 just-added module meant to be adopted later), not dead code in the same sense as the above.
 
+### B14 — Rate limits/abuse controls on the live interview path
+
+1. **Initial hypothesis investigated and found NOT to be a bug — per the "confirm before fixing"
+   rule, skipped rather than "fixed."** `app/main.py` builds its own `Limiter` instance (line 23)
+   and assigns it to `app.state.limiter`, but the actual rate-limited routes
+   (`/api/register` 10/min, `/api/login` 5/min in `app/api/user_routes.py`) use a *second*,
+   separate `Limiter` instance defined in that file — `app.state.limiter` is never read by
+   anything. No `RateLimitExceeded` exception handler or `SlowAPIMiddleware` is registered
+   anywhere. This looked like it would make a rate-limit trip surface as an unhandled 500 instead
+   of a 429. **Disproved by reading slowapi's source** (`RateLimitExceeded` subclasses
+   `HTTPException` with `status_code=429`, and Starlette's default exception-handling middleware
+   handles any `HTTPException` automatically, no custom handler required) **and by direct
+   reproduction** (a throwaway pytest hitting `/api/login` 6 times in a row; the 6th correctly
+   returned `429 {"detail":"5 per 1 minute"}`, not 500). No fix applied; repro files deleted.
+2. **The real, confirmed-by-reading gap: nothing throttles live-interview websocket
+   reconnects.** `POST /api/sessions`, `POST /api/applications`, and the `/ws/{session_id}`
+   connect handshake all have zero rate limiting. The websocket gap is the one that matters
+   cost-wise: `app/interview/handler.py`'s own B10 comment on `build_resume_summary` says a
+   reconnect "opens a brand-new Gemini Live session with no memory of the dropped one" — so
+   before this fix, a client (or an abusive script) could reconnect to the same `session_id` in a
+   tight loop and open an unbounded number of billable Gemini Live sessions. B3's existing
+   `_active_connections` guard doesn't help here — it only blocks *concurrent* connections to one
+   session, not rapid sequential connect/disconnect/reconnect cycling.
+3. **Fix: a per-session connect-attempt throttle in `handler.py`, not a broader/global rate
+   limiter.** Added `_connect_attempts: dict[str, list[float]]` and
+   `_record_connect_attempt(session_id) -> bool`, sliding-window (default 8 attempts per 600s,
+   both new `Settings` fields: `max_connect_attempts_per_session`,
+   `connect_attempt_window_seconds`), checked at the top of `run_interview_session` before the
+   existing B3 concurrency check. Scoped this narrowly — one `session_id`-keyed in-memory guard,
+   same single-worker/race-free assumptions as B3's own `_active_connections` — rather than a
+   per-user or global HTTP rate limiter, since this directly targets the actual cost driver
+   (Gemini session creation) with minimal new surface area, and mirrors a pattern this file
+   already establishes. Over-limit attempts get a clear `error` message and a new close code,
+   `4029` (following this file's existing 4000s-range custom-close-code convention —
+   `4029` deliberately echoes HTTP 429).
+4. **`_connect_attempts`'s memory footprint is bounded by session count, not pruned on a
+   timer.** Every `session_id` ever connected to keeps a small entry (≤ `MAX_CONNECT_ATTEMPTS`
+   timestamps) for the life of the process — bounded by how many interview sessions exist
+   (same order of magnitude as the sessions table itself), not by connection-attempt volume.
+   Judged acceptable for the same reason the in-memory `_active_connections` set already is.
+
+- **Verification:**
+  - `tests/test_websocket.py`: 3 new tests — `test_record_connect_attempt_blocks_after_max_within_window`
+    and `test_record_connect_attempt_ignores_attempts_outside_window` (pure-logic, monkeypatched
+    globals) plus `test_websocket_rejects_connect_attempt_over_the_limit` (full integration:
+    connect, close, reconnect, assert the 2nd connect gets the throttle error). The integration
+    test closes the first connection and polls the admin endpoint for cleanup to finish *before*
+    exiting the `with` block, same reason `_poll_session_status` exists — reconnecting immediately
+    after the block exits races the first connection's server-side teardown against the second
+    connection's own DB access and intermittently corrupts the shared in-memory sqlite connection.
+  - Full suite before and after: **43 passed → 46 passed**, no regressions.
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though

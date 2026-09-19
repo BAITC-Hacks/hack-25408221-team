@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -91,11 +92,60 @@ def build_resume_summary(transcript: List[dict]) -> Optional[str]:
 # `await` in between, so it's race-free under asyncio's cooperative scheduling.
 _active_connections: set[str] = set()
 
+# B14: per-session connect-attempt timestamps, same single-worker/race-free
+# assumptions as _active_connections above. Grows by one small (<=
+# MAX_CONNECT_ATTEMPTS-entry) list per distinct session_id ever connected to --
+# bounded by how many interview sessions exist, same as the sessions table
+# itself, not by connection attempts. Not pruned on a timer since nothing else
+# in this file runs on one; acceptable for the same reason the sessions table
+# isn't pruned either.
+_connect_attempts: dict[str, list[float]] = {}
+MAX_CONNECT_ATTEMPTS = settings.max_connect_attempts_per_session
+CONNECT_ATTEMPT_WINDOW_SECONDS = settings.connect_attempt_window_seconds
+
+
+def _record_connect_attempt(session_id: str) -> bool:
+    """B14: each websocket connect opens a brand-new Gemini Live session (see
+    build_resume_summary above -- a reconnect gets no memory of the dropped
+    one), so nothing previously stopped a client from reconnecting in a tight
+    loop and running up unlimited billable Gemini sessions on one interview.
+    Returns True and records the attempt if session_id is still under
+    MAX_CONNECT_ATTEMPTS within the trailing CONNECT_ATTEMPT_WINDOW_SECONDS,
+    False otherwise."""
+    now = time.monotonic()
+    attempts = [
+        t for t in _connect_attempts.get(session_id, [])
+        if now - t < CONNECT_ATTEMPT_WINDOW_SECONDS
+    ]
+    allowed = len(attempts) < MAX_CONNECT_ATTEMPTS
+    if allowed:
+        attempts.append(now)
+    if attempts:
+        _connect_attempts[session_id] = attempts
+    else:
+        _connect_attempts.pop(session_id, None)
+    return allowed
+
 
 async def run_interview_session(
     websocket: WebSocket, session_id: str, user_id: Optional[str]
 ) -> None:
     logger.info(f"Client connected for session {session_id} (user={user_id})")
+
+    if not _record_connect_attempt(session_id):
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": (
+                        "Too many connection attempts for this interview session. "
+                        "Please wait a few minutes and try again."
+                    ),
+                }
+            )
+        )
+        await websocket.close(code=4029)
+        return
 
     if session_id in _active_connections:
         await websocket.send_text(
