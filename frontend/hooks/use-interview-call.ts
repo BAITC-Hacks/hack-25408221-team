@@ -371,6 +371,12 @@ export function useInterviewCall(userId: string | null) {
             setHasRecording(true)
           }
           mr.start(1000)
+          // B5: tell the backend the instant on-device recording actually
+          // begins, so it can re-anchor transcript timestamps to this moment
+          // instead of to its own (earlier, Gemini-handshake-inflated) clock
+          // start -- otherwise timestamps used to seek this same recording
+          // in the admin AI-detection view drift ahead of the real video.
+          ws.send(JSON.stringify({ type: "recording_started" }))
 
           captureCtxRef.current = new AudioContext({ sampleRate: 16000 })
           if (captureCtxRef.current.state === "suspended") {

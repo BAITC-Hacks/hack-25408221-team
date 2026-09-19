@@ -609,6 +609,78 @@ def test_websocket_disconnect_mid_interview_marks_session_incomplete_with_partia
         app.dependency_overrides.pop(get_session, None)
 
 
+def test_websocket_recording_started_recalibrates_transcript_timestamps(monkeypatch):
+    """B5 regression: transcript timestamps are computed relative to
+    session_start, which is set right before the Gemini Live handshake (a
+    real network round-trip the client's own recording setup doesn't wait
+    on). The fake handshake itself is instant, so to reproduce the real-world
+    gap this test delays *sending* "recording_started" -- simulating the
+    client's own getUserMedia/MediaRecorder setup time -- and uses
+    FakeLiveSession's initial_delay so the scripted response only arrives
+    after that. Without recalibration, the transcript entry's timestamp would
+    be measured from the original (pre-handshake) session_start and land
+    close to the full initial_delay; recalibrated to the later
+    "recording_started" moment, it should land close to
+    initial_delay - send_delay instead."""
+    provide_session = _make_session_provider()
+    app.dependency_overrides[get_session] = provide_session
+    monkeypatch.setattr(handler, "get_session", provide_session)
+    monkeypatch.setattr(websocket_route, "get_session", provide_session)
+    monkeypatch.setattr(settings, "admin_creation_secret", "test-admin-secret")
+
+    SEND_DELAY = 0.35
+    INITIAL_DELAY = 0.6
+
+    fake_session = FakeLiveSession(
+        responses=[user_transcript("Hello after calibration.")],
+        initial_delay=INITIAL_DELAY,
+    )
+    monkeypatch.setattr(
+        handler, "get_genai_client", lambda: make_fake_genai_client(fake_session)
+    )
+
+    try:
+        with TestClient(app) as client:
+            session_id, token = _register_and_create_session(
+                client, "recording-calibration@example.com"
+            )
+            admin_token = _admin_token(
+                client, "test-admin-secret", "recording-calibration-admin@example.com"
+            )
+
+            with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws:
+                status_msg = _receive_json_no_hang(ws, timeout=2)
+                assert status_msg["type"] == "status"
+
+                # Stand-in for the client's own getUserMedia/MediaRecorder
+                # setup time, which the original (uncalibrated) session_start
+                # doesn't account for -- without this delay, session_start and
+                # the "recording_started" moment would be indistinguishable
+                # since the fake Gemini handshake itself takes no real time.
+                time.sleep(SEND_DELAY)
+                ws.send_text(json.dumps({"type": "recording_started"}))
+
+                # Give the fake session's delayed response time to arrive and
+                # be transcribed before disconnecting.
+                time.sleep(INITIAL_DELAY)
+
+                ws.close(1000)
+                body = _poll_session_status(client, session_id, admin_token)
+
+            user_entries = [e for e in body["transcript"] if e["role"] == "user"]
+            assert len(user_entries) == 1
+            # Uncalibrated, this would land close to INITIAL_DELAY (0.6s) --
+            # the time between the original session_start and the response
+            # arriving. Recalibrated to "recording_started", it should land
+            # close to INITIAL_DELAY - SEND_DELAY (~0.25s) instead -- assert
+            # a threshold comfortably between the two to tolerate scheduling
+            # jitter without masking a regression back to the uncalibrated
+            # value.
+            assert user_entries[0]["timestamp"] < 0.45
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
 def test_websocket_reconnect_seeds_new_gemini_session_with_transcript_recap(monkeypatch):
     """B10 regression: reconnecting to the same session_id after a
     mid-interview drop must not silently restart the interview from scratch.

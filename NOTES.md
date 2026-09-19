@@ -864,6 +864,68 @@ already covered vs. what was actually missing.
     resume-context half (the part that can silently break the interview if it regresses) is
     fully covered by the backend integration test above.
 
+### B5: Recording-relative timestamp calibration
+
+Confirmed by reading the code (and an Explore-agent sweep to trace the full consumer chain)
+before fixing. Task description: transcript timestamps should be relative to the actual
+recording, not to an unrelated server clock.
+
+1. **The bug.** `handler.py`'s `session_start` is captured immediately after the client
+   connects, but *before* `client.aio.live.connect(...)` — a real network round-trip to
+   Gemini. `append_turn_text` computes every transcript entry's `timestamp` as
+   `(now - session_start).total_seconds()`. Those timestamps are consumed by
+   `app/ml/ai_detection.py`'s `_build_user_text()` to derive `timestamp_start`/`timestamp_end`
+   for flagged segments, which the admin UI (`admin/applicant/[id]/page.tsx`) uses to seek an
+   inline `<video>` player (`inlineVideoRef.current.currentTime = seg.timestamp_start`). But the
+   client's actual on-device recording (`MediaRecorder`) only starts later, inside `ws.onopen`,
+   after `getUserMedia` + `AudioContext`/`AudioWorklet` setup — a separate, later clock. Net
+   effect: the admin video-seek feature consistently seeks ahead of where the applicant's speech
+   actually occurs in the recording, by however long the Gemini handshake + client setup took.
+2. **The fix.** Added a client->server control message, `{"type": "recording_started"}`, sent
+   the instant `mr.start(1000)` fires in `use-interview-call.ts` — the true moment on-device
+   recording begins. On the backend, `forward_to_gemini()` previously consumed
+   `websocket.iter_bytes()`, which only understands binary frames and would raise on a text
+   frame; rewrote it to a manual `while True: message = await websocket.receive()` loop that
+   branches on `"websocket.disconnect"` (break — see note below), `message["bytes"]` (forward to
+   Gemini exactly as before), and `message["text"]` (parse as JSON; on `"recording_started"`,
+   the *first* time only, re-anchor `session_start = datetime.now(timezone.utc)`). Every
+   timestamp computed after that point is relative to when recording actually started, not to
+   the earlier, handshake-inflated moment.
+   - Confirmed via Starlette source (`websockets.py`) that `iter_bytes()` itself swallows
+     `WebSocketDisconnect` internally and just stops iterating — it never propagates the
+     exception to the caller. So the old code's `except WebSocketDisconnect` around
+     `iter_bytes()` was already dead/unreachable. The rewrite's `break` on
+     `"websocket.disconnect"` matches that same silent-stop behavior exactly, rather than
+     introducing a new log line on a path that never fired before — kept behavior-preserving on
+     disconnect rather than "fixing" a latent quirk as a drive-by.
+3. **Known limitation, flagged rather than silently left.** This calibration only covers the
+   *first* WebSocket connection. On a B10 reconnect, `_run_interview_session` runs again with a
+   fresh, uncalibrated `session_start`, and the frontend does not resend `"recording_started"`
+   on reconnect (gated by `mediaReadyRef.current` already being `true`, since local capture is
+   not torn down across a reconnect). Post-reconnect transcript timestamps therefore revert to
+   being measured against the reconnect's own handshake-inflated `session_start`. Scoped out of
+   B5: it's a reconnect-continuity concern that more naturally belongs with B10 (which already
+   shipped without addressing it), and fixing it here would mean re-deriving "recording start"
+   from something other than a fresh client message, which risks scope creep beyond this task's
+   bug fix.
+
+- **Verification:**
+  - Backend: extended `tests/fakes/gemini.py`'s `FakeLiveSession` with `initial_delay` (a real
+    `asyncio.sleep` before the first scripted response is yielded), added
+    `test_websocket_recording_started_recalibrates_transcript_timestamps` — connects, sleeps
+    0.35s (stand-in for client-side setup time) before sending `"recording_started"`, then waits
+    for a response the fake session delays by 0.6s. Uncalibrated, the resulting transcript
+    entry's timestamp would land near the full 0.6s (measured from the original, pre-handshake
+    `session_start`); recalibrated, it lands near `0.6 - 0.35 = 0.25s` — asserted `< 0.45s`, a
+    threshold comfortably between the two to catch a regression without being flaky on
+    scheduling jitter. Full suite before and after: **29 passed** (28 + 1 new), no regressions.
+  - Frontend: `npx tsc --noEmit` — zero new errors in touched files. `npx next build` —
+    compiles, all 11 routes generated, no errors.
+  - Not covered by an automated test: the real-world magnitude of the drift this fixes (actual
+    Gemini handshake latency, actual browser `getUserMedia` timing) — those only exist outside
+    a test harness. The test above proves the calibration mechanism re-anchors timestamps
+    correctly given a simulated delay, which is the part that can regress silently in code.
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though

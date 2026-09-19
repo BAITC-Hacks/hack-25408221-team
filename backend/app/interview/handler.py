@@ -137,6 +137,17 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
     transcript: List[dict] = list(existing_transcript)
     current_turn: Optional[dict] = None
     session_start = datetime.now(timezone.utc)
+    # B5: session_start above is captured before the Gemini Live handshake
+    # (a network round-trip), while the client's on-device recording only
+    # starts afterward, once it has finished getUserMedia/MediaRecorder setup
+    # -- so transcript timestamps computed against session_start run ahead of
+    # the actual recording timeline (they're used to seek the recording in
+    # the admin AI-detection view, see app/ml/ai_detection.py). The client
+    # sends a "recording_started" message the moment its recording actually
+    # begins (see forward_to_gemini below); once that arrives, session_start
+    # is re-anchored to it so every timestamp after that point is relative to
+    # the recording, not to this earlier, network-latency-inflated moment.
+    recording_start_calibrated = False
     # Marks the start of the current "waiting for the user" window: reset
     # whenever the user is confirmed to have spoken (input_transcription) and
     # whenever the agent finishes a turn (turn_complete) -- so silence is only
@@ -336,18 +347,41 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
             silence_task = asyncio.create_task(silence_monitor())
 
             async def forward_to_gemini():
+                nonlocal session_start, recording_start_calibrated
                 try:
-                    async for data in websocket.iter_bytes():
-                        # NOTE: this only proves audio bytes reached the server,
-                        # not that the user said anything -- the browser streams
-                        # continuously regardless of silence (see pcm-processor.js).
-                        # Real speech evidence is handled in forward_from_gemini
-                        # via input_transcription, using Gemini's own VAD.
-                        await session.send_realtime_input(
-                            audio=types.Blob(
-                                data=data, mime_type="audio/pcm;rate=16000"
+                    while True:
+                        message = await websocket.receive()
+                        if message["type"] == "websocket.disconnect":
+                            # Matches the swallow-and-stop behavior iter_bytes()
+                            # itself uses on disconnect, rather than raising.
+                            break
+
+                        data = message.get("bytes")
+                        if data is not None:
+                            # NOTE: this only proves audio bytes reached the server,
+                            # not that the user said anything -- the browser streams
+                            # continuously regardless of silence (see pcm-processor.js).
+                            # Real speech evidence is handled in forward_from_gemini
+                            # via input_transcription, using Gemini's own VAD.
+                            await session.send_realtime_input(
+                                audio=types.Blob(
+                                    data=data, mime_type="audio/pcm;rate=16000"
+                                )
                             )
-                        )
+                            continue
+
+                        if recording_start_calibrated:
+                            continue
+                        text = message.get("text")
+                        if not text:
+                            continue
+                        try:
+                            control = json.loads(text)
+                        except ValueError:
+                            continue
+                        if control.get("type") == "recording_started":
+                            recording_start_calibrated = True
+                            session_start = datetime.now(timezone.utc)
                 except WebSocketDisconnect:
                     logger.info(f"Client disconnected (send path) for session {session_id}")
 

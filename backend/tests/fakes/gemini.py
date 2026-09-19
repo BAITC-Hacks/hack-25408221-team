@@ -80,6 +80,7 @@ class FakeLiveSession:
         self,
         responses: Optional[List[FakeLiveResponse]] = None,
         hang_when_exhausted: bool = False,
+        initial_delay: float = 0.0,
     ):
         self._responses = list(responses or [])
         self.sent_audio: List[bytes] = []
@@ -90,6 +91,11 @@ class FakeLiveSession:
         # instead of ending the generator. Needed for tests that keep a
         # connection open without ever calling end_session.
         self._hang_when_exhausted = hang_when_exhausted
+        # Real (async) delay before the first response is yielded -- lets a
+        # test simulate a scripted response arriving some measurable time
+        # after the connection opens, e.g. to assert something that happens
+        # in between (like a B5 recalibration message) took effect first.
+        self._initial_delay = initial_delay
 
     def queue(self, response: FakeLiveResponse) -> None:
         self._responses.append(response)
@@ -98,6 +104,8 @@ class FakeLiveSession:
         self.sent_audio.append(audio.data if hasattr(audio, "data") else audio)
 
     async def receive(self):
+        if self._initial_delay:
+            await asyncio.sleep(self._initial_delay)
         for response in self._responses:
             yield response
         if self._hang_when_exhausted:
