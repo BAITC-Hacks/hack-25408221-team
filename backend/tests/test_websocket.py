@@ -233,6 +233,83 @@ def test_websocket_rejects_connection_to_completed_session(monkeypatch):
         app.dependency_overrides.pop(get_session, None)
 
 
+def test_websocket_coalesces_streamed_transcription_fragments_into_one_turn(monkeypatch):
+    """B4 regression: Gemini streams input/output transcription as multiple
+    fragments of the same turn, not one message per turn. Before this fix,
+    every fragment became its own transcript entry, so one sentence spoken by
+    the user showed up as several disjoint "user" rows instead of one."""
+    provide_session = _make_session_provider()
+    app.dependency_overrides[get_session] = provide_session
+    monkeypatch.setattr(handler, "get_session", provide_session)
+    monkeypatch.setattr(websocket_route, "get_session", provide_session)
+    monkeypatch.setattr(settings, "admin_creation_secret", "test-admin-secret")
+
+    fake_session = FakeLiveSession(
+        responses=[
+            user_transcript("Hello, "),
+            user_transcript("I'm excited "),
+            user_transcript("about robotics."),
+            end_session_call({"applicant_notes": {}, "overall_impression": "x", "recommendation": "recommended"}),
+        ]
+    )
+    monkeypatch.setattr(
+        handler, "get_genai_client", lambda: make_fake_genai_client(fake_session)
+    )
+
+    try:
+        with TestClient(app) as client:
+            register_res = client.post(
+                "/api/register",
+                json={
+                    "name": "Applicant",
+                    "email": "fragments@example.com",
+                    "password": "correct-horse-battery-staple",
+                },
+            )
+            user_id = register_res.json()["userId"]
+            token = register_res.json()["accessToken"]
+
+            create_res = client.post(
+                "/api/sessions",
+                json={"userId": user_id, "program": "Computer Science"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            session_id = create_res.json()["sessionId"]
+
+            admin_res = client.post(
+                "/api/admin/create-admin",
+                json={
+                    "email": "fragments-admin@example.com",
+                    "password": "admin-password",
+                    "secret": "test-admin-secret",
+                },
+            )
+            assert admin_res.status_code == 200
+
+            admin_login = client.post(
+                "/api/login",
+                json={"email": "fragments-admin@example.com", "password": "admin-password"},
+            )
+            admin_token = admin_login.json()["accessToken"]
+
+            with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws:
+                ws.receive_json()
+                ws.receive_json()
+
+            session_res = client.get(
+                f"/api/admin/sessions/{session_id}",
+                headers={"Authorization": f"Bearer {admin_token}"},
+            )
+            assert session_res.status_code == 200
+            transcript = session_res.json()["transcript"]
+
+            user_entries = [entry for entry in transcript if entry["role"] == "user"]
+            assert len(user_entries) == 1
+            assert user_entries[0]["text"] == "Hello, I'm excited about robotics."
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
 def test_websocket_rejects_second_concurrent_connection_to_same_session(monkeypatch):
     """B3 regression: before this fix, nothing stopped two concurrent websocket
     connections (e.g. a duplicate tab, or a reconnect while the old socket was

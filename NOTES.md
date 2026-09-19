@@ -217,6 +217,35 @@ PART C of the spec. "Skipped" entries explain why; "Remaining" is filled in at t
   purpose without a real network call.
 - Test run: **before this task, 8 passed.** **After: 9 passed** (adds the test above).
 
+### B4 — Turn-based transcript coalescing
+
+- **Bug found (data-quality, pre-existing), confirmed by reading the code and the real
+  `google.genai.types.LiveServerContent` model:** Gemini's Live API streams
+  `input_transcription`/`output_transcription` as a series of fragments as the user/model
+  speaks -- it does not send one message per completed turn. `forward_from_gemini` appended a
+  brand-new transcript entry for every single fragment it received, so one sentence a person
+  spoke would show up in the saved transcript as several disjoint `"role": "user"` rows
+  (e.g. `"Hello,"`, `" I'm"`, `" excited about robotics."`) instead of one coherent turn. This
+  is exactly the "transcript is fragment-based not turn-based" bug called out in the spec's
+  Definition of Done.
+- **Fix:** `app/interview/handler.py` now tracks a `current_turn` buffer alongside
+  `transcript`. `append_turn_text(role, text)` appends `text` onto `current_turn` if it's the
+  same role as the fragment just received, or finalizes the previous turn (pushing it onto
+  `transcript`) and starts a new one if the role changed. `finalize_current_turn()` is called
+  at every point a turn can legitimately end: on the model's own `turn_complete` signal (a
+  real field on `LiveServerContent`, previously read by nothing in this codebase), right
+  before `save_evaluation` runs in the `end_session` tool-call path, and once more after the
+  outer `asyncio.wait()` resolves (covering disconnect and time-limit-reached paths) so no
+  in-progress turn is silently dropped from the transcript that gets saved.
+- **New test** `tests/test_websocket.py::test_websocket_coalesces_streamed_transcription_fragments_into_one_turn`:
+  scripts three consecutive `user_transcript(...)` fragments ("Hello, " / "I'm excited " /
+  "about robotics.") followed by `end_session_call(...)`, then asserts the persisted
+  transcript has exactly one `"role": "user"` entry whose text is the full concatenated
+  sentence, not three.
+- Test run: **before this task, 9 passed.** **After: 10 passed** (adds the test above; the 9
+  pre-existing tests were unaffected since none of them scripted more than one fragment per
+  role, so coalescing had nothing to change in their assertions).
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though
