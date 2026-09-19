@@ -32,6 +32,10 @@ export function useInterviewCall(userId: string | null) {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [creatingSession, setCreatingSession] = useState(false)
   const [sessionError, setSessionError] = useState("")
+  // Server-configured interview length (settings.max_interview_duration),
+  // returned by POST /api/sessions -- lets the timer's warning thresholds
+  // track the actual configured duration instead of a hardcoded guess.
+  const [maxDurationSecs, setMaxDurationSecs] = useState(300)
   // Populated from the server's typed "error" message, a ws close code, or a
   // local getUserMedia/socket failure -- the human-readable cause shown
   // alongside status === "error", instead of a bare "Connection error" pill.
@@ -232,6 +236,9 @@ export function useInterviewCall(userId: string | null) {
 
       if (data.sessionId) {
         setSessionId(data.sessionId)
+        if (typeof data.maxDurationSecs === "number") {
+          setMaxDurationSecs(data.maxDurationSecs)
+        }
         return data.sessionId
       }
       if (res.status === 409) {
@@ -360,10 +367,6 @@ export function useInterviewCall(userId: string | null) {
           const msg = JSON.parse(event.data as string)
 
           if (msg.type === "status") {
-            const questionMatch = msg.message?.match(/Question (\d+)/i)
-            if (questionMatch) {
-              setCurrentQuestion(parseInt(questionMatch[1]))
-            }
             setShowCheckIn(false)
           } else if (msg.type === "check_in") {
             setShowCheckIn(true)
@@ -431,6 +434,7 @@ export function useInterviewCall(userId: string | null) {
     sessionId,
     creatingSession,
     sessionError,
+    maxDurationSecs,
     errorMessage,
     micDenied,
     noCamera,

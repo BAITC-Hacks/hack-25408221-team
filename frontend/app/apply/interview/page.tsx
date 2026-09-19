@@ -31,6 +31,7 @@ export default function VideoPresentationPage() {
     creatingSession,
     sessionError,
     errorMessage,
+    maxDurationSecs,
     micDenied,
     noCamera,
     cameraDenied,
@@ -56,8 +57,14 @@ export default function VideoPresentationPage() {
 
   const mm = String(Math.floor(timerSecs / 60)).padStart(2, "0")
   const ss = String(timerSecs % 60).padStart(2, "0")
+  // Thresholds track the server-configured duration (90%/70% elapsed) instead
+  // of hardcoded seconds, so they stay correct if max_interview_duration changes.
   const timerColor =
-    timerSecs >= 270 ? "text-red-500" : timerSecs >= 210 ? "text-yellow-500" : "text-foreground"
+    timerSecs >= maxDurationSecs * 0.9
+      ? "text-red-500"
+      : timerSecs >= maxDurationSecs * 0.7
+        ? "text-yellow-500"
+        : "text-foreground"
 
   if (!authChecked) {
     return (

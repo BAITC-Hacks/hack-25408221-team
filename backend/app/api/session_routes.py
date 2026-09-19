@@ -113,7 +113,7 @@ async def create_session(
     session_create = SessionCreate(user_id=user_id, program=program)
     use_case = CreateSessionUseCase(session_repo)
     new_session = await use_case.execute(session_create)
-    return {"sessionId": new_session.id}
+    return {"sessionId": new_session.id, "maxDurationSecs": settings.max_interview_duration}
 
 
 @router.post("/upload-recording")

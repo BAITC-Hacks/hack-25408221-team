@@ -696,6 +696,60 @@ completed, server error, connection lost) mapped from server typed errors."
     Flagged as a real gap, not silently skipped — worth revisiting if/when a frontend test runner is
     added (see A9 dead-code/tooling triage).
 
+### B12: Real question-progress tracking from server; timer thresholds from configured duration
+
+Confirmed by reading the code, then partially fixed — one half done, one half deliberately
+descoped this sprint (see finding 2). Task description: "Replace client-side 'Question N' text
+parsing (server never sends it) with server-sent `{type:'progress', question:N}` via lightweight
+tool call behind flag. Timer color thresholds derived from configured max duration, not hardcoded."
+
+1. **Dead regex parsing confirmed and removed (frontend).** `use-interview-call.ts`'s `"status"`
+   branch did `msg.message?.match(/Question (\d+)/i)` to derive `currentQuestion`. Grepped all of
+   `backend/app/` for the literal string `"Question"` — the only matches are in
+   `app/interview/prompts.py`'s spoken system-instruction text ("After Question 6...", "Question 6
+   is answered..."), which is never sent as a WebSocket payload. The only `"status"` message the
+   server ever sends is the static `"Connected! Your video presentation session has started."` from
+   `handler.py`. The regex has therefore never matched in production — confirmed dead, not just
+   unused. Removed it; `"status"` now only does the (already-live) `setShowCheckIn(false)`.
+2. **Server-driven progress via a new Gemini tool call — confirmed feasible, deliberately NOT
+   implemented this sprint.** Making the model actually report progress requires a second Gemini
+   Live function-declaration (alongside the existing `end_session` in
+   `gemini_client.py`/`prompts.py`) AND an instruction in `SYSTEM_INSTRUCTION` telling the model to
+   call it after each question — there is no way to get real per-question signal out of the model
+   without adding that instruction line. This sprint's constraint is explicit: "Do NOT redesign the
+   interview questions or prompt this sprint." Adding a new instruction to `SYSTEM_INSTRUCTION`,
+   even one line, even behind a flag, is a prompt change, not a UI/wiring change — so it's out of
+   scope regardless of the task description's ask. Skipping this half per the SPEC's own rule
+   ("if it does not fit, note it in NOTES.md and skip it"), not silently. The `currentQuestion`/
+   `totalQuestions` state and the "Question X of Y" UI text in `page.tsx` are left exactly as they
+   were (harmless dead code — `currentQuestion` starts at 0 and is now never incremented, same
+   effective behavior as before this fix, since the removed regex never incremented it either).
+   Left as a named follow-up for a sprint where prompt changes are in scope.
+3. **Timer color thresholds hardcoded — confirmed and fixed.** `page.tsx`'s `timerColor` used literal
+   `timerSecs >= 270` / `>= 210` with no reference to `settings.max_interview_duration` (300s
+   default) — the same value `handler.py` already enforces server-side as the real timeout. Fixed by:
+   - Adding `maxDurationSecs: settings.max_interview_duration` to `POST /api/sessions`'s response
+     (additive field, no breaking change to the existing `sessionId` shape).
+   - `use-interview-call.ts`'s `createSession()` now reads `data.maxDurationSecs` into a new
+     `maxDurationSecs` state (defaulted to 300 so nothing breaks if an older/mismatched backend
+     omits the field), returned from the hook.
+   - `page.tsx`'s `timerColor` now computes `timerSecs >= maxDurationSecs * 0.9` (red) /
+     `* 0.7` (yellow) instead of the magic numbers — with the 300s default this evaluates to the
+     exact same 270/210 thresholds as before, so behavior is unchanged unless the configured
+     duration actually differs from the default.
+
+- **Verification:**
+  - Backend: added `tests/test_session_routes.py::test_create_session_returns_configured_max_duration`
+    asserting the new field equals `settings.max_interview_duration`. Full suite before and after:
+    **24 passed** (23 + 1 new), no regressions.
+  - Frontend: `npx tsc --noEmit` — zero new errors in touched files (same pre-existing, unrelated
+    errors in `app/admin/applicant/[id]/page.tsx` and `app/apply/form/page.tsx` as before this
+    change). `npx next build` — compiles, same route shapes.
+  - No new frontend unit test added for the threshold-percentage arithmetic: same no-test-runner
+    carve-out as B11 (nothing new to add to that gap — still tracked under A9).
+  - Explicitly NOT done this sprint (see finding 2): the actual server-sent `{type: "progress",
+    question: N}` message and its backing Gemini tool call, because it requires a prompt change.
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though
