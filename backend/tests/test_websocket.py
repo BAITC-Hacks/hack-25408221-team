@@ -9,6 +9,7 @@ those fixtures.
 """
 
 import json
+import logging
 import queue
 import time
 
@@ -761,5 +762,70 @@ def test_silence_monitor_suppresses_check_in_while_agent_is_speaking(monkeypatch
                     _receive_json_no_hang(ws, timeout=0.4)
 
                 ws.close(1000)
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
+def test_admin_creation_log_omits_email(monkeypatch, caplog):
+    """B15 regression: app/api/admin_routes.py used to log the admin's raw
+    email at INFO on account creation. Assert the email never appears in a
+    log record, while the creation event itself is still observable."""
+    provide_session = _make_session_provider()
+    app.dependency_overrides[get_session] = provide_session
+    monkeypatch.setattr(settings, "admin_creation_secret", "test-admin-secret")
+
+    try:
+        with TestClient(app) as client:
+            with caplog.at_level(logging.INFO):
+                _admin_token(client, "test-admin-secret", "secret-admin@example.com")
+
+            messages = [r.getMessage() for r in caplog.records]
+            assert not any("secret-admin@example.com" in m for m in messages)
+            assert any("Admin account created" in m for m in messages)
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
+def test_interview_logs_omit_transcript_content_at_info_and_include_session_id(
+    monkeypatch, caplog
+):
+    """B15 regression: forward_from_gemini() used to log the applicant's
+    transcribed speech verbatim at INFO -- sensitive interview content, not
+    metadata. It should still be loggable for local debugging (DEBUG), but
+    must not land in default (INFO) production logs. Separately, several
+    lifecycle log lines in this module didn't carry the session_id at all,
+    making them useless for correlating with a specific interview."""
+    provide_session = _make_session_provider()
+    app.dependency_overrides[get_session] = provide_session
+    monkeypatch.setattr(handler, "get_session", provide_session)
+    monkeypatch.setattr(websocket_route, "get_session", provide_session)
+
+    sensitive_text = "My home address is 42 Wallaby Way, Sydney."
+    fake_session = FakeLiveSession(
+        responses=[user_transcript(sensitive_text)],
+        hang_when_exhausted=True,
+    )
+    monkeypatch.setattr(
+        handler, "get_genai_client", lambda: make_fake_genai_client(fake_session)
+    )
+
+    try:
+        with TestClient(app) as client:
+            session_id, token = _register_and_create_session(
+                client, "log-hygiene@example.com"
+            )
+
+            with caplog.at_level(logging.INFO):
+                with client.websocket_connect(f"/ws/{session_id}?token={token}") as ws:
+                    status_msg = ws.receive_json()
+                    assert status_msg["type"] == "status"
+                    time.sleep(0.2)
+                    ws.close(1000)
+
+            info_messages = [
+                r.getMessage() for r in caplog.records if r.levelno == logging.INFO
+            ]
+            assert not any(sensitive_text in m for m in info_messages)
+            assert any(session_id in m for m in info_messages)
     finally:
         app.dependency_overrides.pop(get_session, None)

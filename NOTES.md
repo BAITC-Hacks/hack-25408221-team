@@ -418,6 +418,45 @@ PART C of the spec. "Skipped" entries explain why; "Remaining" is filled in at t
   `handler.py` changes and before writing any new test, confirming the pre-existing 14 still
   passed unchanged. **After adding the two new tests: 16 passed.**
 
+### B15 — Logging hygiene: no PII at INFO, session_id correlation
+
+- **Bug found, confirmed by reading the code:** grepped every `logger.*` call under `app/` and
+  found two problems.
+  - `app/api/admin_routes.py`'s `create_admin_account` logged
+    `f"Admin account created: {email}"` at INFO — the admin's raw email, landing in default
+    production logs.
+  - `app/interview/handler.py`'s `forward_from_gemini()` logged the applicant's own transcribed
+    speech verbatim at INFO (`f"User: {sc.input_transcription.text}"`) and the agent's spoken text
+    the same way (`f"Gemini: {part.text}"`) — the actual interview content, not just metadata,
+    also landing in default production logs.
+  - Separately, roughly a third of the `logger.*` calls in `handler.py` (e.g. "Client disconnected
+    (receive path)", "Presentation time limit reached", "Connection closed...") carried no
+    `session_id` at all, making them useless for correlating a log line with the specific
+    interview it came from — the surrounding calls in the same function already do include it, so
+    this was an inconsistency, not a deliberate omission.
+- **Fix (logging-only, no behavior change to interview logic or admin creation):**
+  - `admin_routes.py` now logs `admin.id` instead of `email`.
+  - The two content-bearing `handler.py` logs are demoted from `logger.info` to `logger.debug` —
+    still available for local debugging (`logging.basicConfig(level=logging.DEBUG)`), absent from
+    the app's default INFO-level production config (`app/main.py`).
+  - Every remaining `logger.*` call in `handler.py`'s `_run_interview_session` (and its nested
+    closures, which all close over the same `session_id` parameter) now includes `session_id` in
+    the message text, matching the calls that already did.
+- **New tests** in `tests/test_websocket.py`, both using pytest's `caplog` fixture:
+  - `test_admin_creation_log_omits_email` — creates an admin account and asserts no captured log
+    record contains the email, while the creation event itself is still observable.
+  - `test_interview_logs_omit_transcript_content_at_info_and_include_session_id` — scripts a
+    `user_transcript(...)` response containing a distinctive sensitive string, asserts no INFO-level
+    record contains that string, and asserts the session's `session_id` appears in at least one
+    INFO record.
+  - Verified both are real regressions, not vacuous: temporarily reverted just
+    `handler.py`/`admin_routes.py` (`git stash push --keep-index -- ...`) and re-ran the two new
+    tests against the pre-fix code — both failed (email and transcript text both showed up in the
+    captured INFO records), then passed clean after popping the stash back.
+- Test run: **before this task, 16 passed** (from B1). Ran the full suite once right after the
+  logging changes and before writing any new test, confirming the pre-existing 16 still passed
+  unchanged. **After adding the two new tests: 18 passed.**
+
 ## Known pre-existing failures (not caused by this sprint, not in scope)
 
 - `frontend` has no `eslint` (or `eslint-config-next`) in `devDependencies`, even though

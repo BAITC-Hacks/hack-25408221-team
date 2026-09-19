@@ -174,13 +174,15 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
                             }
                         )
                     )
-                    logger.info(f"Check-in {check_in_count}/{MAX_CHECK_INS}")
+                    logger.info(
+                        f"Check-in {check_in_count}/{MAX_CHECK_INS} for session {session_id}"
+                    )
                     await asyncio.sleep(CHECK_IN_WAIT)
                 elif (
                     silence_duration >= CHECK_IN_INTERVAL
                     and check_in_count >= MAX_CHECK_INS
                 ):
-                    logger.info("Max check-ins reached, ending session")
+                    logger.info(f"Max check-ins reached, ending session {session_id}")
                     await websocket.send_text(
                         json.dumps(
                             {
@@ -217,7 +219,10 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
                 )
                 break
         except Exception as e:
-            logger.error(f"Failed to dead-letter evaluation: {e}", exc_info=True)
+            logger.error(
+                f"Failed to dead-letter evaluation for session {session_id}: {e}",
+                exc_info=True,
+            )
 
     async def save_evaluation(args: dict) -> bool:
         nonlocal evaluation_saved
@@ -281,13 +286,16 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
                 )
                 break
         except Exception as e:
-            logger.error(f"Failed to mark session incomplete: {e}", exc_info=True)
+            logger.error(
+                f"Failed to mark session incomplete for session {session_id}: {e}",
+                exc_info=True,
+            )
 
     try:
         async with client.aio.live.connect(
             model=settings.model, config=config
         ) as session:
-            logger.info("Gemini Live session opened")
+            logger.info(f"Gemini Live session opened for session {session_id}")
 
             await websocket.send_text(
                 json.dumps(
@@ -314,7 +322,7 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
                             )
                         )
                 except WebSocketDisconnect:
-                    logger.info("Client disconnected (send path)")
+                    logger.info(f"Client disconnected (send path) for session {session_id}")
 
             async def forward_from_gemini():
                 nonlocal session_ended, last_activity, agent_speaking, check_in_count
@@ -331,7 +339,12 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
                                     append_turn_text(
                                         "user", sc.input_transcription.text
                                     )
-                                    logger.info(f"User: {sc.input_transcription.text}")
+                                    # Applicant's own words -- content, not just
+                                    # metadata, so this stays out of default (INFO)
+                                    # production logs.
+                                    logger.debug(
+                                        f"User [{session_id}]: {sc.input_transcription.text}"
+                                    )
                                     # Confirmed evidence (Gemini's own VAD +
                                     # transcription) that the user just spoke.
                                     last_activity = datetime.now(timezone.utc)
@@ -360,7 +373,9 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
                                                 part.inline_data.data
                                             )
                                         elif part.text:
-                                            logger.info(f"Gemini: {part.text}")
+                                            logger.debug(
+                                                f"Gemini [{session_id}]: {part.text}"
+                                            )
 
                             if response.tool_call and response.tool_call.function_calls:
                                 for call in response.tool_call.function_calls:
@@ -408,9 +423,11 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
                                         return
 
                 except WebSocketDisconnect:
-                    logger.info("Client disconnected (receive path)")
+                    logger.info(
+                        f"Client disconnected (receive path) for session {session_id}"
+                    )
                 except Exception as e:
-                    logger.error(f"Gemini receive error: {e}")
+                    logger.error(f"Gemini receive error for session {session_id}: {e}")
 
             t1 = asyncio.create_task(forward_to_gemini())
             t2 = asyncio.create_task(forward_from_gemini())
@@ -422,7 +439,7 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
             )
 
             if not done:
-                logger.info("Presentation time limit reached")
+                logger.info(f"Presentation time limit reached for session {session_id}")
                 try:
                     await websocket.send_text(
                         json.dumps(
@@ -451,12 +468,14 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
                     pass
 
     except WebSocketDisconnect:
-        logger.info("WebSocket disconnected before session opened")
+        logger.info(
+            f"WebSocket disconnected before session opened for session {session_id}"
+        )
         finalize_current_turn()
         if not evaluation_saved:
             await mark_incomplete()
     except Exception as e:
-        logger.error(f"Session error: {e}", exc_info=True)
+        logger.error(f"Session error for session {session_id}: {e}", exc_info=True)
         finalize_current_turn()
         if not evaluation_saved:
             await mark_incomplete()
@@ -469,4 +488,7 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
     finally:
         if silence_task:
             silence_task.cancel()
-        logger.info(f"Connection closed. Transcript entries: {len(transcript)}")
+        logger.info(
+            f"Connection closed for session {session_id}. "
+            f"Transcript entries: {len(transcript)}"
+        )

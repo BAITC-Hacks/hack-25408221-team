@@ -72,7 +72,7 @@ async def create_admin_account(
     await db_session.commit()
     await db_session.refresh(admin)
 
-    logger.info(f"Admin account created: {email}")
+    logger.info(f"Admin account created: {admin.id}")
     return {
         "userId": admin.id,
         "name": admin.name,
