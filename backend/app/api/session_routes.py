@@ -16,6 +16,7 @@ from app.core.security import decode_access_token
 from app.domain.entities import TranscriptEntry
 from app.infrastructure.database import get_session
 from app.infrastructure.repositories import SessionRepository, UserRepository
+from app.infrastructure import s3_client as s3_client_module
 from app.infrastructure.s3_client import s3_client
 from app.use_cases.session_use_cases import (
     CreateSessionUseCase,
@@ -242,11 +243,33 @@ async def serve_local_upload(
 ):
     if not token:
         raise HTTPException(status_code=401, detail="Authentication required")
-    if not decode_access_token(token):
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    requesting_user = await UserRepository(db_session).get_by_id(payload.get("sub"))
+    if not requesting_user:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-    full_path = Path("uploads") / file_path
+    # Read _LOCAL_DIR from the module at request time rather than caching a
+    # resolved constant at import time -- tests monkeypatch this global to
+    # keep uploads out of the repo's real ./uploads/ directory, and it must
+    # stay the same base dir upload_file/get_presigned_url just wrote/served.
+    uploads_base_dir = s3_client_module._LOCAL_DIR.resolve()
+    full_path = (uploads_base_dir / file_path).resolve()
+    if not full_path.is_relative_to(uploads_base_dir):
+        raise HTTPException(status_code=404, detail="File not found")
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
+
+    # Uploads are keyed as "recordings/{session_id}/{filename}" (see
+    # UploadRecordingUseCase) -- recover the owning session from that shape
+    # so a valid token only grants access to the caller's own recordings.
+    parts = file_path.split("/")
+    owner_session = None
+    if len(parts) >= 2 and parts[0] == "recordings":
+        owner_session = await SessionRepository(db_session).get_by_id(parts[1])
+    if requesting_user.role != "admin":
+        if owner_session is None or owner_session.user_id != requesting_user.id:
+            raise HTTPException(status_code=403, detail="You do not have access to this file")
 
     return FileResponse(str(full_path), media_type="video/webm")

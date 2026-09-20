@@ -147,3 +147,38 @@ async def test_get_recording_url_allows_owner(client):
     res = await client.get(f"/api/recording-url/{session_id}?token={owner_token}")
     assert res.status_code == 200
     assert "url" in res.json()
+
+
+async def test_serve_local_upload_rejects_non_owner(client):
+    """Section 0 checklist item 3: /api/uploads/{file_path} checked token
+    validity only, never ownership, so any valid token could read any
+    other applicant's uploaded file."""
+    owner_id, owner_token = await _register(client, "upl-owner@example.com")
+    session_id = await _create_session(client, owner_id, owner_token)
+    await _upload_call(client, session_id, owner_token)
+
+    _, intruder_token = await _register(client, "upl-intruder@example.com")
+    res = await client.get(
+        f"/api/uploads/recordings/{session_id}/{session_id}.webm?token={intruder_token}"
+    )
+    assert res.status_code == 403
+
+
+async def test_serve_local_upload_allows_owner(client):
+    owner_id, owner_token = await _register(client, "upl-owner2@example.com")
+    session_id = await _create_session(client, owner_id, owner_token)
+    await _upload_call(client, session_id, owner_token, b"the actual bytes")
+
+    res = await client.get(
+        f"/api/uploads/recordings/{session_id}/{session_id}.webm?token={owner_token}"
+    )
+    assert res.status_code == 200
+    assert res.content == b"the actual bytes"
+
+
+async def test_serve_local_upload_rejects_path_traversal(client):
+    """Section 0 checklist item 3: file_path was joined onto the uploads
+    base dir with no containment check, so "../" segments could escape it."""
+    _, token = await _register(client, "traversal@example.com")
+    res = await client.get(f"/api/uploads/../../etc/passwd?token={token}")
+    assert res.status_code == 404
