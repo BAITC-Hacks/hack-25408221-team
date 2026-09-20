@@ -1,6 +1,6 @@
 import pytest
 
-from app.domain.entities import SessionCreate, UserCreate
+from app.domain.entities import RatingEventCreate, SessionCreate, UserCreate
 from app.domain.enums import RaterType, RatingEventStatus
 from app.infrastructure.repositories import (
     RatingEventRepository,
@@ -114,3 +114,54 @@ async def test_execute_persists_only_validated_proposals_as_proposed_model_rows(
 
     for field in ("overall_score", "score", "recommendation", "verdict"):
         assert not hasattr(events[0], field)
+
+
+async def test_execute_never_mutates_a_previously_human_decided_row(db_session, a_session, monkeypatch):
+    from app.use_cases import propose_rating_events_use_case as module
+
+    await SessionRepository(db_session).update_transcript(a_session.id, TRANSCRIPT)
+
+    rating_event_repo = RatingEventRepository(db_session)
+    proposed = await rating_event_repo.create(
+        RatingEventCreate(
+            session_id=a_session.id,
+            indicator="leadership",
+            quote="I led a team of five students to rebuild our school's robotics club.",
+            band="developing",
+            rater_type=RaterType.MODEL.value,
+        )
+    )
+    decided = await rating_event_repo.update_status(
+        proposed.id, status=RatingEventStatus.ACCEPTED.value, rater_id="admin-1"
+    )
+
+    class FakeResponse:
+        text = (
+            '{"proposals": [{"indicator": "leadership", "quote": '
+            '"I led a team of five students to rebuild our school\'s robotics club.", '
+            '"band": "strong"}]}'
+        )
+
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            return FakeResponse()
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.models = FakeModels()
+
+    monkeypatch.setattr(module.genai, "Client", FakeClient)
+
+    use_case = module.ProposeRatingEventsUseCase(SessionRepository(db_session), rating_event_repo)
+    events, error = await use_case.execute(a_session.id)
+    assert error is None
+    assert len(events) == 1
+
+    still_decided = await rating_event_repo.get_by_id(decided.id)
+    assert still_decided.status == RatingEventStatus.ACCEPTED.value
+    assert still_decided.rater_type == RaterType.HUMAN.value
+    assert still_decided.rater_id == "admin-1"
+    assert still_decided.band == "developing"
+
+    all_rows = await rating_event_repo.list_by_session(a_session.id)
+    assert len(all_rows) == 2
