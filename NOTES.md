@@ -1373,3 +1373,57 @@ one commit per item, one regression test per behavior change, per Section 4's me
 
 P1 is complete. Proceeding to P2 (scoring core — `motivation_university`, `leadership`,
 `prior_experience` only, per the cut line) next.
+
+### P2 — Scoring core, 3 blocks only (checklist)
+
+Additive only: a new `rating_events` table/repo/use case/endpoint alongside the existing
+`Session.transcript`/`evaluation` pipeline, which is untouched. No aggregate score or
+overall verdict is computed or stored anywhere in this new path (Section 5, criterion 2).
+
+1. **`RatingEventTable` + migration.** New table: `id`, `session_id` (FK → sessions.id),
+   `indicator` (`motivation_university` | `leadership` | `prior_experience`), `quote`,
+   `band` (`emerging` | `developing` | `strong` — a fixed ordinal anchored by rubric
+   description, never a computed threshold or per-rater z-score, per Section 1),
+   `rater_type` (`model` | `human`), `rater_id` (nullable), `status` (`proposed` |
+   `accepted` | `rejected`), `created_at`. Along the way, found and fixed a real,
+   previously-undetected bug in `tests/test_migrations.py`: the test's raw
+   `engine.connect()` never committed its connection, so every DDL statement after the
+   first caught `OperationalError` silently rolled back once the connection closed —
+   this had already been hiding the pre-existing `sessions.status` column from that
+   test's own assertions. Fixed with an explicit `conn.commit()`. Commit `d2d96b5`.
+2. **`RatingEventRepository`** (`create`/`list_by_session`/`get_by_id`/`update_status`).
+   `update_status` flips `rater_type` to `human` whenever a `rater_id` is passed — the
+   mechanism that makes a decided row recognizable as durable. 3 tests (create, per-session
+   scoping, human-decision flip). Commit `2121921`.
+3. **`ProposeRatingEventsUseCase`.** Sends the transcript to Gemini asking only for a
+   verbatim quote + band per indicator (no aggregate score/recommendation, mirroring
+   `ANALYSIS_PROMPT`'s anti-bias instructions). Every proposal is validated before
+   persisting: indicator and band must be one of the fixed enum values, and the quote must
+   be an exact substring of the *applicant's own* transcript turns (`role == "user"` only,
+   same filter as `explainability.py`'s `_extract_key_quotes` — a quote can never be lifted
+   from the interviewer's question). Invalid proposals are discarded with a logged warning,
+   never persisted. This is a create-only path — it never fetches or mutates existing rows,
+   which is what makes re-proposing safe against already-decided rows (see item 5). Commit
+   `c9802eb`.
+4. **Human decide endpoint.**
+   `POST /api/admin/sessions/{session_id}/rating-events/{event_id}/decide` (admin-only,
+   `require_admin`) lets a committee member accept/reject a proposed row, optionally
+   correcting its band or quote — corrected quotes are still required to be verbatim
+   applicant transcript text, same rule as machine-proposed ones. Verifies the event
+   belongs to the given session before deciding. Commit `ba1fc01`.
+5. **Tests.** Quote-validation rejection (unknown indicator, unknown band, quote not found
+   verbatim, quote lifted from the interviewer) in `test_propose_rating_events_use_case.py`;
+   propose-persists-only-validated-rows-as-proposed/model; non-admin gets 403 on the decide
+   endpoint; decide transitions status and flips `rater_type` to `human`; decide 404s when
+   the event doesn't belong to the given session; decide rejects a hand-edited quote not
+   found in the transcript; and the durability regression this SPEC actually cares about —
+   re-running `ProposeRatingEventsUseCase` against a session with an already-human-decided
+   row leaves that row completely untouched (status/rater_type/rater_id/band all unchanged)
+   while still adding a fresh model-proposed row alongside it. Full suite green (80 passed)
+   throughout. Commits `c9802eb`, `ba1fc01`, `98cee16`.
+
+*(T23 and anything about additional blocks/cross-rater aggregation is out of scope per the
+cut line — not built this pass.)*
+
+P2 is complete. Proceeding to P3 (committee view — grid + separate context panel only,
+per the cut line) next.
