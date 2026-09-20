@@ -31,8 +31,6 @@ import {
   AlertTriangle,
   TrendingUp,
   Brain,
-  Loader2,
-  ScanSearch,
   SkipForward,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -138,22 +136,6 @@ type ApiUser = {
   phone: string
   has_recording: boolean
   session: Session | null
-}
-
-type FlaggedSegment = {
-  transcript_index: number
-  text: string
-  timestamp_start: number
-  timestamp_end: number
-  max_ai_score: number
-  sentences: { sentence: string; ai_score: number }[]
-}
-
-type AIDetectionResult = {
-  overall_score: number
-  total_user_segments: number
-  flagged_segments: FlaggedSegment[]
-  error: string | null
 }
 
 const questionLabels: Record<string, string> = {
@@ -314,10 +296,6 @@ export default function ApplicantDetailPage() {
   const [expandedTranscript, setExpandedTranscript] = useState(false)
   const [showRecordingModal, setShowRecordingModal] = useState(false)
   const inlineVideoRef = useRef<HTMLVideoElement>(null)
-  const [aiDetection, setAIDetection] = useState<AIDetectionResult | null>(null)
-  const [aiDetectionLoading, setAIDetectionLoading] = useState(false)
-  const [aiDetectionError, setAIDetectionError] = useState<string | null>(null)
-  const [expandedSegments, setExpandedSegments] = useState<Set<number>>(new Set())
 
   useEffect(() => {
     if (!user || user.role !== "admin") {
@@ -854,185 +832,6 @@ export default function ApplicantDetailPage() {
                         </div>
                       </div>
 
-                      {/* AI Detection panel */}
-                      <div className="rounded-xl border border-border bg-background p-6 space-y-4">
-                        {/* Header row */}
-                        <div className="flex items-center justify-between gap-3 flex-wrap">
-                          <div className="flex items-center gap-2">
-                            <ScanSearch className="h-5 w-5 text-muted-foreground" />
-                            <h3 className="font-semibold">AI Detection</h3>
-                          </div>
-                          <div className="flex items-center gap-3 flex-wrap">
-                            {/* Summary badge */}
-                            {aiDetection && !aiDetectionError && (() => {
-                              const pct = Math.round(aiDetection.overall_score * 100)
-                              const flagged = aiDetection.flagged_segments.length
-                              const total = aiDetection.total_user_segments
-                              const badgeClass =
-                                aiDetection.overall_score < 0.3
-                                  ? "bg-green-100 text-green-800"
-                                  : aiDetection.overall_score <= 0.6
-                                  ? "bg-amber-100 text-amber-800"
-                                  : "bg-red-100 text-red-800"
-                              return (
-                                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${badgeClass}`}>
-                                  AI Detection: {pct}% likely AI-generated &nbsp;·&nbsp; {flagged} flagged / {total} total
-                                </span>
-                              )
-                            })()}
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="gap-2"
-                              disabled={aiDetectionLoading || !applicant.session?.id}
-                              onClick={async () => {
-                                if (!applicant.session?.id) return
-                                setAIDetectionLoading(true)
-                                setAIDetectionError(null)
-                                setAIDetection(null)
-                                try {
-                                  const result = await api.detectAI(applicant.session.id)
-                                  if (result.error) setAIDetectionError(result.error)
-                                  else setAIDetection(result)
-                                } catch (err: any) {
-                                  setAIDetectionError(err.message || "Detection failed")
-                                } finally {
-                                  setAIDetectionLoading(false)
-                                }
-                              }}
-                            >
-                              {aiDetectionLoading ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <ScanSearch className="h-4 w-4" />
-                              )}
-                              {aiDetection ? "Re-run" : "Run AI Detection"}
-                            </Button>
-                          </div>
-                        </div>
-
-                        {/* Loading */}
-                        {aiDetectionLoading && (
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Analyzing transcript…
-                          </div>
-                        )}
-
-                        {/* Error */}
-                        {aiDetectionError && (
-                          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                            {aiDetectionError}
-                          </div>
-                        )}
-
-                        {/* Idle */}
-                        {!aiDetection && !aiDetectionLoading && !aiDetectionError && (
-                          <p className="text-sm text-muted-foreground">
-                            Click "Run AI Detection" to analyze the transcript.
-                          </p>
-                        )}
-
-                        {/* Results */}
-                        {aiDetection && !aiDetectionError && (
-                          <>
-                            {aiDetection.flagged_segments.length === 0 ? (
-                              <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 font-medium">
-                                No AI-generated speech detected
-                              </div>
-                            ) : (
-                              <div className="space-y-3">
-                                {[...aiDetection.flagged_segments]
-                                  .sort((a, b) => a.timestamp_start - b.timestamp_start)
-                                  .map((seg, i) => {
-                                    const fmt = (s: number) => {
-                                      const m = Math.floor(s / 60)
-                                      const sec = Math.floor(s % 60)
-                                      return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
-                                    }
-                                    const isExpanded = expandedSegments.has(i)
-                                    const scoreColor =
-                                      seg.max_ai_score >= 0.9
-                                        ? "bg-red-100 text-red-800"
-                                        : seg.max_ai_score >= 0.7
-                                        ? "bg-orange-100 text-orange-800"
-                                        : "bg-amber-100 text-amber-800"
-
-                                    return (
-                                      <div
-                                        key={i}
-                                        className="rounded-lg border border-border overflow-hidden"
-                                      >
-                                        {/* Row header — click to seek */}
-                                        <div
-                                          className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-muted/40 transition-colors"
-                                          onClick={() => {
-                                            if (inlineVideoRef.current) {
-                                              inlineVideoRef.current.currentTime = seg.timestamp_start
-                                              inlineVideoRef.current.play()
-                                              inlineVideoRef.current.scrollIntoView({ behavior: "smooth", block: "center" })
-                                            }
-                                          }}
-                                        >
-                                          <SkipForward className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                          <span className="font-mono text-xs text-muted-foreground shrink-0">
-                                            {fmt(seg.timestamp_start)} – {fmt(seg.timestamp_end)}
-                                          </span>
-                                          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold shrink-0 ${scoreColor}`}>
-                                            AI Score: {Math.round(seg.max_ai_score * 100)}%
-                                          </span>
-                                          <p className="flex-1 text-sm truncate text-muted-foreground min-w-0">
-                                            {seg.text}
-                                          </p>
-                                          <button
-                                            className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
-                                            onClick={(e) => {
-                                              e.stopPropagation()
-                                              setExpandedSegments((prev) => {
-                                                const next = new Set(prev)
-                                                next.has(i) ? next.delete(i) : next.add(i)
-                                                return next
-                                              })
-                                            }}
-                                          >
-                                            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                                          </button>
-                                        </div>
-
-                                        {/* Expanded body */}
-                                        {isExpanded && (
-                                          <div className="border-t border-border bg-muted/20 px-4 py-3 space-y-3">
-                                            <p className="text-sm leading-relaxed">
-                                              {seg.text.length > 120 ? seg.text : seg.text}
-                                            </p>
-                                            {seg.sentences.length > 0 && (
-                                              <div className="space-y-1">
-                                                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Flagged sentences</p>
-                                                {seg.sentences.map((s, j) => (
-                                                  <div key={j} className="flex items-start gap-2 text-xs">
-                                                    <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-orange-400" />
-                                                    <span className="flex-1 text-muted-foreground">"{s.sentence}"</span>
-                                                    <span className={`shrink-0 rounded-full px-1.5 py-0.5 font-semibold ${
-                                                      s.ai_score >= 0.9 ? "bg-red-100 text-red-800" :
-                                                      s.ai_score >= 0.7 ? "bg-orange-100 text-orange-800" :
-                                                      "bg-amber-100 text-amber-800"
-                                                    }`}>
-                                                      {Math.round(s.ai_score * 100)}%
-                                                    </span>
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            )}
-                                          </div>
-                                        )}
-                                      </div>
-                                    )
-                                  })}
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
                     </>
                   ) : (
                     <div className="rounded-xl border border-border bg-background p-6 text-center">

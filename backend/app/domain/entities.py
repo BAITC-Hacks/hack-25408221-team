@@ -45,8 +45,8 @@ class TranscriptEntry(BaseModel):
     the server (POST /sessions/{id}/analyze) -- not used for
     Session.transcript itself, since that field flows untouched as raw
     dicts through the live-call hot path (handler.py) and several
-    ML/admin consumers (app/ml/ai_detection.py, admin_routes.py,
-    enhanced_analysis.py) that index it with dict access; retyping it
+    ML/admin consumers (admin_routes.py, enhanced_analysis.py) that index
+    it with dict access; retyping it
     there would ripple into those call sites for no behavior-preserving
     benefit."""
 

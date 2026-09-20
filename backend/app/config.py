@@ -19,7 +19,6 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 500
     presigned_url_expiry_hours: int = 1
     admin_creation_secret: str = ""
-    sapling_api_key: str = ""
 
     # Live-interview silence check-in behavior (see app/api/websocket.py).
     checkin_silence_interval_seconds: int = 20

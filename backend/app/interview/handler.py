@@ -192,7 +192,7 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
     # starts afterward, once it has finished getUserMedia/MediaRecorder setup
     # -- so transcript timestamps computed against session_start run ahead of
     # the actual recording timeline (they're used to seek the recording in
-    # the admin AI-detection view, see app/ml/ai_detection.py). The client
+    # the admin transcript view). The client
     # sends a "recording_started" message the moment its recording actually
     # begins (see forward_to_gemini below); once that arrives, session_start
     # is re-anchored to it so every timestamp after that point is relative to

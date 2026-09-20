@@ -26,7 +26,6 @@ from app.use_cases.session_use_cases import (
     UploadRecordingUseCase,
 )
 from app.use_cases.analyze_session_use_case import AnalyzeSessionUseCase
-from app.ml.ai_detection import run_ai_detection
 
 router = APIRouter(prefix="/api", tags=["sessions"])
 
@@ -213,26 +212,6 @@ async def get_recording_url(
 
     fresh_url = await s3_client.get_presigned_url(session_obj.recording_url)
     return {"url": fresh_url}
-
-
-@router.post("/sessions/{session_id}/detect-ai")
-async def detect_ai_in_session(
-    session_id: str,
-    current_user=Depends(get_current_user),
-    use_case: GetSessionUseCase = Depends(_get_get_session_use_case),
-):
-    session_obj, error = await use_case.execute(session_id)
-    if error or not session_obj:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if not session_obj.transcript:
-        raise HTTPException(status_code=422, detail="Session has no transcript yet")
-
-    result = run_ai_detection(session_obj.transcript, settings.sapling_api_key)
-
-    if result.get("error"):
-        raise HTTPException(status_code=502, detail=result["error"])
-
-    return result
 
 
 @router.get("/uploads/{file_path:path}")

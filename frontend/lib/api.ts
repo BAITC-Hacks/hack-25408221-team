@@ -127,19 +127,4 @@ export const api = {
     fetchApi<{ total: number; page: number; page_size: number; pages: number; items: any[] }>(
       `/api/admin/sessions?page=${page}&page_size=${pageSize}`
     ),
-
-  detectAI: (sessionId: string) =>
-    fetchApi<{
-      overall_score: number
-      total_user_segments: number
-      flagged_segments: {
-        transcript_index: number
-        text: string
-        timestamp_start: number
-        timestamp_end: number
-        max_ai_score: number
-        sentences: { sentence: string; ai_score: number }[]
-      }[]
-      error: string | null
-    }>(`/api/sessions/${sessionId}/detect-ai`, { method: "POST" }),
 }

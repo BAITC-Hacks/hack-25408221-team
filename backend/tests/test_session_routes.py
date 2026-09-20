@@ -155,3 +155,22 @@ async def test_create_session_is_rate_limited(client):
 
     assert statuses[:10] == [200] * 10
     assert statuses[10] == 429
+
+
+async def test_detect_ai_route_removed(client):
+    """SPEC Section 1: no AI-text detection. P1.3 removed the Sapling-backed
+    detect-ai endpoint entirely -- confirm it's gone rather than just
+    unreachable from the UI."""
+    user_id, token = await _register(client, "detect-ai-removed@example.com")
+    session_res = await client.post(
+        "/api/sessions",
+        json={"userId": user_id, "program": "General"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    session_id = session_res.json()["sessionId"]
+
+    res = await client.post(
+        f"/api/sessions/{session_id}/detect-ai",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 404
