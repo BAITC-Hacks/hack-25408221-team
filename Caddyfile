@@ -1,0 +1,36 @@
+# Caddyfile for inVision U
+# Local (no domain):  :80 serves http://localhost
+# Hetzner with DOMAIN: {$DOMAIN} serves http(s)://<IP> or https://<IP>.nip.io
+# Keep this file simple — Coolify's Traefik can replace it on Hetzner if you prefer.
+
+{
+	# Global options — no email needed for IP/nip.io by default.
+	# For real domains, uncomment below:
+	# acme_ca https://acme-v02.api.letsencrypt.org/directory
+}
+
+# Local / IP-only (no TLS) — default when DOMAIN is unset or = localhost.
+# Caddy will serve 80 and auto-redirect 80→443 only if TLS is configured.
+:80 {
+	reverse_proxy /api/* backend:8000
+	reverse_proxy /ws/* backend:8000
+	reverse_proxy frontend:3000
+	encode zstd gzip
+}
+
+# Production with DOMAIN (e.g. 65.21.12.34.nip.io) — TLS via Let's Encrypt.
+# Enable by setting DOMAIN in .env and restarting caddy:
+#   DOMAIN=65.21.12.34.nip.io docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d caddy
+# Coolify users: skip this block, let Coolify's Traefik handle TLS.
+# {$DOMAIN}:443 {
+# 	reverse_proxy /api/* backend:8000
+# 	reverse_proxy /ws/* backend:8000
+# 	reverse_proxy frontend:3000
+# 	encode zstd gzip
+# }
+
+# When Coolify is used, this Caddy is not needed — Coolify's Traefik already
+# routes /api and /ws to backend:8000 and /* to frontend:3000.
+# Keep this file for `docker compose -f docker-compose.yml -f docker-compose.prod.yml up`
+# local testing without Coolify.
+

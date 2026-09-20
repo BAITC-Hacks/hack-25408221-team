@@ -20,8 +20,7 @@ class S3Client:
             import boto3
             from botocore.config import Config
 
-            self._s3 = boto3.client(
-                "s3",
+            client_kwargs = dict(
                 region_name=settings.aws_region,
                 config=Config(
                     retries={"max_attempts": 3, "mode": "standard"},
@@ -29,6 +28,9 @@ class S3Client:
                     s3={"addressing_style": "path"},
                 ),
             )
+            if settings.aws_endpoint_url:
+                client_kwargs["endpoint_url"] = settings.aws_endpoint_url
+            self._s3 = boto3.client("s3", **client_kwargs)
 
     async def upload_file(
         self, file_key: str, file_content: bytes, content_type: str = "video/webm"

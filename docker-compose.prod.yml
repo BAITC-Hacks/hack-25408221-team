@@ -1,0 +1,145 @@
+# Production / Hetzner overlay for inVision U
+# Usage locally (no domain, no TLS):
+#   cp backend/.env.example backend/.env  # set DB_PASSWORD, JWT_SECRET, GEMINI_API_KEY
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build
+#   # with MinIO instead of local volume:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile minio up --build
+#
+# On Hetzner (hel1 CX22, IP-only, no domain):
+#   scp -r . deploy@<IP>:/srv/invision && scp .env deploy@<IP>:/srv/invision/.env
+#   ssh deploy@<IP> "cd /srv/invision && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build"
+# With Coolify: import this compose or let Coolify create db/minio as managed services.
+#
+# For TLS without buying a domain later: set DOMAIN=<IP>.nip.io and Coolify/Caddy will get Let's Encrypt.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # POSTGRES_* are read directly from backend/.env (see POSTGRES_*
+    # aliases there). No host interpolation needed — container env is enough.
+    env_file:
+      - ./backend/.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - invision
+
+  # Caddy is the public ingress for local / non-Coolify VPS.
+  # Locally it serves :80 HTTP (no TLS). On Hetzner with DOMAIN set
+  # (e.g. 65.21.12.34.nip.io) it auto-issues TLS. When Coolify is used,
+  # its built-in Traefik replaces Caddy — keep this for local parity.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    networks:
+      - invision
+
+  # MinIO — S3-compatible storage. Activate with --profile minio.
+  # When active, set in backend/.env:
+  #   AWS_S3_BUCKET=invision
+  #   AWS_ENDPOINT_URL=http://minio:9000
+  #   AWS_REGION=eu-west-1
+  # Bucket `invision` is auto-created by minio-setup.
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - invision
+    profiles:
+      - minio
+
+  minio-setup:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-minioadmin123} &&
+      /usr/bin/mc mb myminio/invision --ignore-existing &&
+      /usr/bin/mc anonymous set download myminio/invision &&
+      echo 'MinIO bucket invision ready' &&
+      exit 0
+      "
+    networks:
+      - invision
+    profiles:
+      - minio
+
+  # Override backend to inject Hetzner/local DB host + wire volumes
+  backend:
+    env_file:
+      - ./backend/.env
+    environment:
+      DB_HOST: db
+      DB_USE_IAM_AUTH: "false"
+      CORS_ORIGINS: "http://localhost,http://localhost:80,http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000"
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - invision
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  frontend:
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - invision
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  uploads:
+  caddy_data:
+  caddy_config:
+  minio_data:
+
+networks:
+  invision:
+    name: invision
+
+# Note: base docker-compose.yml defines frontend build args NEXT_PUBLIC_API_URL/WS_URL.
+# For local: http://localhost / ws://localhost
+# For Hetzner IP: http://<IP> / ws://<IP>
+# For nip.io TLS: https://<IP>.nip.io / wss://<IP>.nip.io
+# When using Coolify, set those build args in Coolify's UI per-app instead.

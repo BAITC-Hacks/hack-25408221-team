@@ -21,13 +21,27 @@ def test_missing_jwt_secret_fails_fast():
     env["GEMINI_API_KEY"] = "test-key"
     env["DB_HOST"] = "localhost"
 
-    result = subprocess.run(
-        [sys.executable, "-c", "import app.config"],
-        cwd=BACKEND_DIR,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
+    # Settings loads from backend/.env via `env_file=".env"`. If a real
+    # backend/.env exists locally (created for docker compose), it would
+    # supply JWT_SECRET and mask the missing-env case. Temporarily hide it
+    # so the test verifies the no-file + no-env fail-fast path.
+    dot_env = os.path.join(BACKEND_DIR, ".env")
+    dot_env_bak = dot_env + ".bak_test"
+    moved = False
+    if os.path.exists(dot_env):
+        os.rename(dot_env, dot_env_bak)
+        moved = True
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", "import app.config"],
+            cwd=BACKEND_DIR,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        if moved:
+            os.rename(dot_env_bak, dot_env)
 
     assert result.returncode != 0
     assert "jwt_secret" in result.stderr.lower()
