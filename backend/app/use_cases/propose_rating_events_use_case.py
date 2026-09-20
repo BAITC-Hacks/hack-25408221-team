@@ -37,10 +37,11 @@ IMPORTANT:
 Return ONLY the JSON object, no other text."""
 
 
-def _applicant_text(transcript: list) -> str:
+def applicant_only_text(transcript: list) -> str:
     """Only the applicant's own turns -- matches explainability.py's
     _extract_key_quotes role filtering, so a quote can never be lifted from
-    the interviewer's questions instead of the applicant's answer."""
+    the interviewer's questions instead of the applicant's answer. Reused by
+    the human decide endpoint to validate hand-edited quotes the same way."""
     return "\n".join(
         entry.get("text", "") for entry in transcript if entry.get("role") == "user"
     )
@@ -51,7 +52,7 @@ def validate_proposals(proposals: list, transcript: list) -> List[dict]:
     is an actual verbatim substring of the applicant's own words. This is
     what makes a persisted rating_event "validated-quote" rather than a
     model assertion taken on faith."""
-    applicant_text = _applicant_text(transcript)
+    applicant_text = applicant_only_text(transcript)
     valid: List[dict] = []
     for proposal in proposals:
         indicator = proposal.get("indicator")

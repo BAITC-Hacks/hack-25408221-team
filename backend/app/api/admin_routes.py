@@ -9,12 +9,17 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.config import settings
 from app.core.security import hash_password
 from app.core.auth import require_admin
-from app.domain.enums import Recommendation
+from app.domain.enums import Recommendation, RatingBand, RatingEventStatus
 from app.infrastructure.database import get_session
 from app.infrastructure.models import UserTable
-from app.infrastructure.repositories import SessionRepository, UserRepository
+from app.infrastructure.repositories import (
+    RatingEventRepository,
+    SessionRepository,
+    UserRepository,
+)
 from app.ml.scorer import CoreScorer
 from app.ml.triage import compute_triage_queue
+from app.use_cases.propose_rating_events_use_case import applicant_only_text
 from app.use_cases.user_use_cases import GetUserUseCase, ListUsersUseCase
 
 logger = logging.getLogger(__name__)
@@ -275,3 +280,56 @@ async def admin_submit_feedback(
     await repo.update_feedback(session_id, feedback_data)
     logger.info(f"Admin {admin.id} submitted feedback for session {session_id}: {rating}")
     return {"session_id": session_id, "feedback_recorded": True, "rating": rating}
+
+
+@router.post("/sessions/{session_id}/rating-events/{event_id}/decide")
+async def admin_decide_rating_event(
+    session_id: str,
+    event_id: str,
+    payload: dict,
+    admin=Depends(require_admin),
+    db_session: AsyncSession = Depends(get_session),
+):
+    """A committee member accepts or rejects a model-proposed rating_event,
+    optionally correcting its band/quote. This is the only way a rating_event
+    ever becomes a durable human decision (SPEC Section 1: human actions are
+    durable) -- a later model proposal for the same indicator inserts a new
+    row rather than overwriting this one."""
+    status_value = payload.get("status")
+    valid_statuses = {RatingEventStatus.ACCEPTED.value, RatingEventStatus.REJECTED.value}
+    if status_value not in valid_statuses:
+        raise HTTPException(
+            status_code=400, detail=f"status must be one of: {', '.join(sorted(valid_statuses))}"
+        )
+
+    band = payload.get("band")
+    valid_bands = {b.value for b in RatingBand}
+    if band is not None and band not in valid_bands:
+        raise HTTPException(
+            status_code=400, detail=f"band must be one of: {', '.join(sorted(valid_bands))}"
+        )
+
+    session_repo = SessionRepository(db_session)
+    session = await session_repo.get_by_id(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    rating_event_repo = RatingEventRepository(db_session)
+    event = await rating_event_repo.get_by_id(event_id)
+    if not event or event.session_id != session_id:
+        raise HTTPException(status_code=404, detail="Rating event not found")
+
+    quote = payload.get("quote")
+    if quote is not None:
+        applicant_text = applicant_only_text(session.transcript or [])
+        if not quote or quote not in applicant_text:
+            raise HTTPException(
+                status_code=400,
+                detail="quote must be a verbatim applicant statement from the transcript",
+            )
+
+    updated = await rating_event_repo.update_status(
+        event_id, status=status_value, rater_id=admin.id, band=band, quote=quote
+    )
+    logger.info(f"Admin {admin.id} decided rating event {event_id}: {status_value}")
+    return updated
