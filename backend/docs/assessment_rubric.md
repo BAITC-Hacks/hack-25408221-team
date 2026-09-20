@@ -10,7 +10,12 @@ Each interview session is evaluated across 6 questions. The AI produces:
 - **Overall Score**: 1-10 scale
 - **Recommendation**: strongly_recommended | recommended | consider | not_recommended
 - **Confidence Level**: high | medium | low
-- **Communication Quality**: excellent | good | average | poor
+
+The AI also records **Communication Quality** (excellent | good | average | poor) and the
+**Q6 family-support answer** as context for human reviewers. Neither is a scoring input:
+communication quality is a fluency/articulation proxy, and family support is background —
+both are excluded from `overall_score` and `recommendation` by instruction (see
+`app/interview/prompts.py`, `app/use_cases/analyze_session_use_case.py`).
 
 ---
 
@@ -22,9 +27,10 @@ Each interview session is evaluated across 6 questions. The AI produces:
 - Clear, detailed answers to all 6 questions
 - Strong motivation demonstrating alignment with inVision U's mission
 - Specific examples of leadership and achievement
-- Excellent communication skills (clear, articulate, confident)
 - Well-articulated long-term goals with clear program connection
-- Strong family/support system engagement
+
+(Communication style and family support are recorded as context — see Overview — and do
+not raise or lower this score.)
 
 **Typical Profile:**
 - "I want to attend inVision U because its innovation-focused curriculum aligns perfectly with my goal to become a tech entrepreneur. The hands-on learning approach will help me develop practical skills."
@@ -38,9 +44,7 @@ Each interview session is evaluated across 6 questions. The AI produces:
 - Adequate answers to most questions (5-6 answered well)
 - Reasonable motivation for applying
 - Some demonstration of leadership potential
-- Good communication skills
 - Clear long-term goals
-- Adequate support system
 
 **Typical Profile:**
 - "I chose this program because it has a good reputation and the courses seem interesting."
@@ -54,9 +58,7 @@ Each interview session is evaluated across 6 questions. The AI produces:
 - Weak answers to 2-3 questions
 - Unclear or generic motivation
 - Limited leadership examples
-- Average communication skills (some hesitation, unclear articulation)
 - Vague or undefined goals
-- Limited support system mentioned
 
 **Typical Profile:**
 - Short answers (< 50 words per question)
@@ -71,9 +73,7 @@ Each interview session is evaluated across 6 questions. The AI produces:
 - Incomplete answers (many questions unanswered)
 - No clear motivation for applying
 - No leadership demonstration
-- Poor communication (incomplete sentences, very short answers)
 - No clear goals
-- No support system mentioned
 - Concerning responses (disinterest, inappropriate content)
 
 **Typical Profile:**
@@ -132,16 +132,13 @@ Each interview session is evaluated across 6 questions. The AI produces:
 
 ### Q6: Family support
 
-| Score | Indicators |
-|-------|------------|
-| 9-10 | Specific supporters named; clear support system |
-| 7-8 | General support mentioned |
-| 5-6 | Minimal mention |
-| 1-4 | No support or concerning response |
+Recorded verbatim for context only. **Not scored** — this answer describes the
+applicant's background, not their competency, and must never move `overall_score`,
+`recommendation`, or any indicator band.
 
 ---
 
-## Communication Quality Scoring
+## Communication Quality (recorded, not scored)
 
 | Level | Criteria |
 |-------|----------|
@@ -149,6 +146,10 @@ Each interview session is evaluated across 6 questions. The AI produces:
 | **Good** | Generally clear; minor issues with grammar or pacing |
 | **Average** | Some difficulty expressing ideas; occasional confusion |
 | **Poor** | Hard to understand; very short answers; significant issues |
+
+This label is fluency/grammar/accent-adjacent and is recorded for human reviewers' context
+only. It must never enter `overall_score`, `recommendation`, or any competency indicator
+band.
 
 ---
 
