@@ -1,23 +1,16 @@
-# Production / Hetzner overlay for inVision U
+# Production / Hetzner overlay for inVision U (Traefik / Coolify integrated)
 # Usage locally (no domain, no TLS):
-#   cp backend/.env.example backend/.env  # set DB_PASSWORD, JWT_SECRET, GEMINI_API_KEY
+#   cp backend/.env.example backend/.env
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build
-#   # with MinIO instead of local volume:
-#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile minio up --build
 #
-# On Hetzner (hel1 CX22, IP-only, no domain):
-#   scp -r . deploy@<IP>:/srv/invision && scp .env deploy@<IP>:/srv/invision/.env
-#   ssh deploy@<IP> "cd /srv/invision && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build"
-# With Coolify: import this compose or let Coolify create db/minio as managed services.
-#
-# For TLS without buying a domain later: set DOMAIN=<IP>.nip.io and Coolify/Caddy will get Let's Encrypt.
+# On Hetzner (hel1 CX22, with Traefik & Let's Encrypt SSL):
+#   Provides full HTTPS (https://invision.2.29.37.96.nip.io) and WSS (wss://)
+#   by integrating directly with Coolify's built-in Traefik proxy.
 
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
-    # POSTGRES_* are read directly from backend/.env (see POSTGRES_*
-    # aliases there). No host interpolation needed — container env is enough.
     env_file:
       - ./backend/.env
     volumes:
@@ -31,10 +24,9 @@ services:
     networks:
       - invision
 
-  # Caddy is the public ingress for local / non-Coolify VPS.
-  # Locally it serves :80 HTTP (no TLS). On Hetzner with DOMAIN set
-  # (e.g. 65.21.12.34.nip.io) it auto-issues TLS. When Coolify is used,
-  # its built-in Traefik replaces Caddy — keep this for local parity.
+  # Caddy acts as a local fallback on port 8081. In production on the VPS,
+  # Traefik (coolify-proxy) handles ports 80/443 directly via docker labels,
+  # so Caddy is only active if run manually or during local testing.
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -51,58 +43,17 @@ services:
         condition: service_started
     networks:
       - invision
-
-  # MinIO — S3-compatible storage. Activate with --profile minio.
-  # When active, set in backend/.env:
-  #   AWS_S3_BUCKET=invision
-  #   AWS_ENDPOINT_URL=http://minio:9000
-  #   AWS_REGION=eu-west-1
-  # Bucket `invision` is auto-created by minio-setup.
-  minio:
-    image: minio/minio:latest
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - invision
     profiles:
-      - minio
+      - caddy-local
 
-  minio-setup:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      /usr/bin/mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-minioadmin123} &&
-      /usr/bin/mc mb myminio/invision --ignore-existing &&
-      /usr/bin/mc anonymous set download myminio/invision &&
-      echo 'MinIO bucket invision ready' &&
-      exit 0
-      "
-    networks:
-      - invision
-    profiles:
-      - minio
-
-  # Override backend to inject Hetzner/local DB host + wire volumes
+  # Override backend to join coolify network and configure Traefik SSL labels
   backend:
     env_file:
       - ./backend/.env
     environment:
       DB_HOST: db
       DB_USE_IAM_AUTH: "false"
-      CORS_ORIGINS: "http://localhost,http://localhost:80,http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000"
+      CORS_ORIGINS: "https://invision.2.29.37.96.nip.io,http://localhost:3000,http://127.0.0.1:3000"
     volumes:
       - uploads:/app/uploads
     depends_on:
@@ -110,6 +61,7 @@ services:
         condition: service_healthy
     networks:
       - invision
+      - coolify
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
@@ -117,34 +69,61 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
+    labels:
+      - "traefik.enable=true"
+      # HTTP Router (redirect to HTTPS)
+      - "traefik.http.routers.invision-backend-http.rule=Host(`invision-api.2.29.37.96.nip.io`)"
+      - "traefik.http.routers.invision-backend-http.entrypoints=http"
+      - "traefik.http.routers.invision-backend-http.middlewares=redirect-to-https"
+      # MIDDLEWARE definition for redirect
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      # HTTPS Router
+      - "traefik.http.routers.invision-backend-https.rule=Host(`invision-api.2.29.37.96.nip.io`)"
+      - "traefik.http.routers.invision-backend-https.entrypoints=https"
+      - "traefik.http.routers.invision-backend-https.tls=true"
+      - "traefik.http.routers.invision-backend-https.tls.certresolver=letsencrypt"
+      # Service definition
+      - "traefik.http.routers.invision-backend-https.service=invision-backend"
+      - "traefik.http.services.invision-backend.loadbalancer.server.port=8000"
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: http://2.29.37.96:8081
-        NEXT_PUBLIC_WS_URL: ws://2.29.37.96:8081
+        NEXT_PUBLIC_API_URL: https://invision-api.2.29.37.96.nip.io
+        NEXT_PUBLIC_WS_URL: wss://invision-api.2.29.37.96.nip.io
     depends_on:
       backend:
         condition: service_healthy
     networks:
       - invision
+      - coolify
     restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      # HTTP Router (redirect to HTTPS)
+      - "traefik.http.routers.invision-frontend-http.rule=Host(`invision.2.29.37.96.nip.io`)"
+      - "traefik.http.routers.invision-frontend-http.entrypoints=http"
+      - "traefik.http.routers.invision-frontend-http.middlewares=redirect-to-https"
+      # HTTPS Router
+      - "traefik.http.routers.invision-frontend-https.rule=Host(`invision.2.29.37.96.nip.io`)"
+      - "traefik.http.routers.invision-frontend-https.entrypoints=https"
+      - "traefik.http.routers.invision-frontend-https.tls=true"
+      - "traefik.http.routers.invision-frontend-https.tls.certresolver=letsencrypt"
+      # Service definition
+      - "traefik.http.routers.invision-frontend-https.service=invision-frontend"
+      - "traefik.http.services.invision-frontend.loadbalancer.server.port=3000"
 
 volumes:
   pgdata:
   uploads:
   caddy_data:
   caddy_config:
-  minio_data:
 
 networks:
   invision:
     name: invision
-
-# Note: base docker-compose.yml defines frontend build args NEXT_PUBLIC_API_URL/WS_URL.
-# For local: http://localhost / ws://localhost
-# For Hetzner IP: http://<IP> / ws://<IP>
-# For nip.io TLS: https://<IP>.nip.io / wss://<IP>.nip.io
-# When using Coolify, set those build args in Coolify's UI per-app instead.
+  coolify:
+    name: coolify
+    external: true
