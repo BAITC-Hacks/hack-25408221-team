@@ -9,7 +9,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.config import settings
 from app.core.security import hash_password
 from app.core.auth import require_admin
-from app.domain.enums import Recommendation, RatingBand, RatingEventStatus
+from app.domain.enums import RaterType, Recommendation, RatingBand, RatingEventStatus, RatingIndicator
 from app.infrastructure.database import get_session
 from app.infrastructure.models import UserTable
 from app.infrastructure.repositories import (
@@ -333,3 +333,97 @@ async def admin_decide_rating_event(
     )
     logger.info(f"Admin {admin.id} decided rating event {event_id}: {status_value}")
     return updated
+
+
+def _current_event_per_indicator(events: list) -> dict:
+    """Per indicator, the most recent human-decided row if one exists, else
+    the latest model-proposed row -- never a blended/aggregated value across
+    rows (Section 1: distribution to committee, no hard thresholds).
+    `events` is expected in created_at-ascending order (list_by_session's
+    ordering), so the last matching entry is the most recent one."""
+    by_indicator: dict = {indicator.value: [] for indicator in RatingIndicator}
+    for event in events:
+        if event.indicator in by_indicator:
+            by_indicator[event.indicator].append(event)
+
+    current = {}
+    for indicator, indicator_events in by_indicator.items():
+        human_events = [e for e in indicator_events if e.rater_type == RaterType.HUMAN.value]
+        current[indicator] = human_events[-1] if human_events else (
+            indicator_events[-1] if indicator_events else None
+        )
+    return current
+
+
+@router.get("/committee")
+async def admin_committee_grid(
+    _admin=Depends(require_admin),
+    db_session: AsyncSession = Depends(get_session),
+):
+    """One row per session, with each of the 3 in-scope indicators' current
+    band/status -- no blended overall score field anywhere in the response
+    (Section 5, criterion 3)."""
+    session_repo = SessionRepository(db_session)
+    user_repo = UserRepository(db_session)
+    rating_event_repo = RatingEventRepository(db_session)
+
+    sessions = await session_repo.list_all()
+    items = []
+    for session in sessions:
+        user = await user_repo.get_by_id(session.user_id)
+        events = await rating_event_repo.list_by_session(session.id)
+        current = _current_event_per_indicator(events)
+        items.append(
+            {
+                "session_id": session.id,
+                "user_id": session.user_id,
+                "user_name": user.name if user else None,
+                "program": session.program,
+                "indicators": {
+                    indicator: (
+                        {
+                            "band": event.band,
+                            "status": event.status,
+                            "rater_type": event.rater_type,
+                        }
+                        if event
+                        else None
+                    )
+                    for indicator, event in current.items()
+                },
+            }
+        )
+    return {"items": items}
+
+
+@router.get("/committee/{session_id}")
+async def admin_committee_context(
+    session_id: str,
+    _admin=Depends(require_admin),
+    db_session: AsyncSession = Depends(get_session),
+):
+    """The full rating_event distribution for one session, grouped by
+    indicator with every quote visible -- the separate context panel
+    (Section 5, criterion 3), distinct from the grid's single current value
+    per indicator."""
+    session_repo = SessionRepository(db_session)
+    session = await session_repo.get_by_id(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    user = await UserRepository(db_session).get_by_id(session.user_id)
+    events = await RatingEventRepository(db_session).list_by_session(session_id)
+
+    rating_events_by_indicator: dict = {indicator.value: [] for indicator in RatingIndicator}
+    for event in events:
+        if event.indicator in rating_events_by_indicator:
+            rating_events_by_indicator[event.indicator].append(event)
+
+    return {
+        "session_id": session.id,
+        "user_id": session.user_id,
+        "user_name": user.name if user else None,
+        "program": session.program,
+        "transcript": session.transcript,
+        "rating_events": rating_events_by_indicator,
+    }
