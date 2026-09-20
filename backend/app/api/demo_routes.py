@@ -64,7 +64,7 @@ async def demo_analyze(
     scores = CoreScorer().score_core(applicant_data, transcript, evaluation)
     baseline = scores["baseline"]
 
-    explanation = explain_recommendation(evaluation, applicant_data, baseline)
+    explanation = explain_recommendation(evaluation, baseline)
     feature_importance = compute_feature_importance(applicant_data, evaluation)
 
     return {

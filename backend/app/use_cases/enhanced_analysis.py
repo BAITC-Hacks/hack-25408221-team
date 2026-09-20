@@ -33,7 +33,7 @@ class EnhancedAnalysisUseCase:
         edge_cases = scores["edge_cases"]
         authenticity = scores["authenticity"]
 
-        explanation = explain_recommendation(evaluation, applicant_data, baseline)
+        explanation = explain_recommendation(evaluation, baseline)
         feature_importance = compute_feature_importance(applicant_data, evaluation)
 
         language_proficiency = compute_language_proficiency(transcript, applicant_data)

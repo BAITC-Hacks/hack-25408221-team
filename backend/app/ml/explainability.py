@@ -153,7 +153,7 @@ def compute_uncertainty(
 
     if reliability == "very_low":
         confidence -= 20
-        factors.append("Multiple edge cases detected (non-English, short session, etc.)")
+        factors.append("Multiple edge cases detected (short session, unusually long transcript, etc.)")
     elif reliability == "low":
         confidence -= 12
         factors.append("Edge cases detected — accuracy may be reduced")
@@ -186,7 +186,6 @@ def compute_uncertainty(
 
 def explain_recommendation(
     evaluation: Optional[Dict[str, Any]],
-    applicant_data: Optional[Dict[str, Any]],
     baseline_result: Optional[dict] = None,
     transcript: Optional[List[dict]] = None,
     all_sessions: Optional[List[Dict[str, Any]]] = None,
@@ -227,13 +226,6 @@ def explain_recommendation(
 
     for concern in concerns[:3]:
         factors.append({"factor": concern, "impact": "negative"})
-
-    if applicant_data:
-        comm = applicant_data.get("communication_quality")
-        if comm in ("excellent", "good"):
-            factors.append({"factor": f"Communication quality: {comm}", "impact": "positive"})
-        elif comm == "poor":
-            factors.append({"factor": "Communication quality: poor", "impact": "negative"})
 
     key_quotes = _extract_key_quotes(transcript, strengths, concerns)
 

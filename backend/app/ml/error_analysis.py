@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional
 
 def detect_evaluation_inconsistencies(
     evaluation: Optional[Dict[str, Any]],
-    applicant_data: Optional[Dict[str, Any]],
 ) -> dict:
     if not evaluation:
         return {
@@ -47,15 +46,6 @@ def detect_evaluation_inconsistencies(
             "detail": "No concerns/areas_for_improvement listed but recommendation is 'not_recommended'",
         })
 
-    if applicant_data:
-        comm_quality = applicant_data.get("communication_quality", "")
-        if comm_quality == "excellent" and score is not None and score < 5:
-            inconsistencies.append({
-                "type": "communication_score_mismatch",
-                "severity": "low",
-                "detail": f"Communication quality is 'excellent' but overall score is {score}",
-            })
-
     return {
         "inconsistencies": inconsistencies,
         "has_inconsistencies": len(inconsistencies) > 0,
@@ -65,7 +55,6 @@ def detect_evaluation_inconsistencies(
 
 def identify_edge_cases(
     transcript: Optional[List[dict]],
-    applicant_data: Optional[Dict[str, Any]],
 ) -> dict:
     edge_cases = []
 
@@ -88,29 +77,6 @@ def identify_edge_cases(
             "severity": "low",
             "detail": f"Transcript has {len(transcript)} entries — possible repetition",
         })
-
-    if applicant_data:
-        lang = (applicant_data.get("language_used") or "english").lower()
-        if lang not in ("english", "en", ""):
-            edge_cases.append({
-                "type": "non_english_interview",
-                "severity": "low",
-                "detail": f"Primary language detected: {lang}",
-            })
-
-        if applicant_data.get("confidence_level") == "low":
-            edge_cases.append({
-                "type": "low_confidence_assessment",
-                "severity": "medium",
-                "detail": "AI reported low confidence in its own assessment",
-            })
-
-        if applicant_data.get("communication_quality") == "poor":
-            edge_cases.append({
-                "type": "poor_communication",
-                "severity": "medium",
-                "detail": "AI assessed communication quality as 'poor'",
-            })
 
     critical_count = sum(1 for e in edge_cases if e["severity"] in ("critical", "high"))
     reliability_map = {0: "high", 1: "medium", 2: "low"}

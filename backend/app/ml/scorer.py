@@ -25,8 +25,8 @@ class CoreScorer(ScorerInterface):
         ai_recommendation = (evaluation or {}).get("recommendation")
         agreement = agreement_score(ai_recommendation, baseline["recommendation"])
 
-        inconsistencies = detect_evaluation_inconsistencies(evaluation, applicant_data)
-        edge_cases = identify_edge_cases(transcript, applicant_data)
+        inconsistencies = detect_evaluation_inconsistencies(evaluation)
+        edge_cases = identify_edge_cases(transcript)
         authenticity = compute_authenticity_score(applicant_data, transcript)
 
         return {
