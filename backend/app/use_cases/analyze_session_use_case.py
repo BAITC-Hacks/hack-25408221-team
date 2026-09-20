@@ -34,6 +34,11 @@ Return a JSON object with this exact structure:
   }
 }
 
+IMPORTANT — overall_score, recommendation, strengths, and areas_for_improvement must never
+be influenced by confidence_level, communication_quality, accent, grammar, vocabulary,
+fluency, language_used, or the content of q6_family_support. Those fields are recorded for
+the admissions committee's context only, not as scoring inputs.
+
 Return ONLY the JSON object, no other text."""
 
 
