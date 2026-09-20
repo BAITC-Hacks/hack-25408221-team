@@ -7,10 +7,21 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.security import hash_password
-from app.domain.entities import Session, SessionCreate, User, UserCreate
-from app.domain.enums import SessionStatus
-from app.domain.interfaces import SessionRepositoryInterface, UserRepositoryInterface
-from app.infrastructure.models import SessionTable, UserTable
+from app.domain.entities import (
+    RatingEvent,
+    RatingEventCreate,
+    Session,
+    SessionCreate,
+    User,
+    UserCreate,
+)
+from app.domain.enums import RaterType, SessionStatus
+from app.domain.interfaces import (
+    RatingEventRepositoryInterface,
+    SessionRepositoryInterface,
+    UserRepositoryInterface,
+)
+from app.infrastructure.models import RatingEventTable, SessionTable, UserTable
 
 
 def _to_user(db_user: UserTable) -> User:
@@ -22,6 +33,20 @@ def _to_user(db_user: UserTable) -> User:
         password=db_user.password,
         role=db_user.role,
         created_at=db_user.created_at,
+    )
+
+
+def _to_rating_event(db_event: RatingEventTable) -> RatingEvent:
+    return RatingEvent(
+        id=db_event.id,
+        session_id=db_event.session_id,
+        indicator=db_event.indicator,
+        quote=db_event.quote,
+        band=db_event.band,
+        rater_type=db_event.rater_type,
+        rater_id=db_event.rater_id,
+        status=db_event.status,
+        created_at=db_event.created_at,
     )
 
 
@@ -223,3 +248,65 @@ class SessionRepository(SessionRepositoryInterface):
         await self.session.commit()
         await self.session.refresh(db_session)
         return _to_session(db_session)
+
+
+class RatingEventRepository(RatingEventRepositoryInterface):
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create(self, rating_event: RatingEventCreate) -> RatingEvent:
+        db_event = RatingEventTable(
+            id=str(uuid.uuid4()),
+            session_id=rating_event.session_id,
+            indicator=rating_event.indicator,
+            quote=rating_event.quote,
+            band=rating_event.band,
+            rater_type=rating_event.rater_type,
+            rater_id=rating_event.rater_id,
+        )
+        self.session.add(db_event)
+        await self.session.commit()
+        await self.session.refresh(db_event)
+        return _to_rating_event(db_event)
+
+    async def list_by_session(self, session_id: str) -> List[RatingEvent]:
+        result = await self.session.execute(
+            select(RatingEventTable)
+            .where(RatingEventTable.session_id == session_id)
+            .order_by(RatingEventTable.created_at)
+        )
+        return [_to_rating_event(e) for e in result.scalars().all()]
+
+    async def get_by_id(self, event_id: str) -> Optional[RatingEvent]:
+        result = await self.session.execute(
+            select(RatingEventTable).where(RatingEventTable.id == event_id)
+        )
+        db_event = result.scalars().first()
+        return _to_rating_event(db_event) if db_event else None
+
+    async def update_status(
+        self,
+        event_id: str,
+        status: str,
+        rater_id: Optional[str] = None,
+        band: Optional[str] = None,
+        quote: Optional[str] = None,
+    ) -> RatingEvent:
+        result = await self.session.execute(
+            select(RatingEventTable).where(RatingEventTable.id == event_id)
+        )
+        db_event = result.scalars().first()
+        if not db_event:
+            raise ValueError(f"Rating event {event_id} not found")
+        db_event.status = status
+        if rater_id is not None:
+            db_event.rater_id = rater_id
+            db_event.rater_type = RaterType.HUMAN.value
+        if band is not None:
+            db_event.band = band
+        if quote is not None:
+            db_event.quote = quote
+        self.session.add(db_event)
+        await self.session.commit()
+        await self.session.refresh(db_event)
+        return _to_rating_event(db_event)

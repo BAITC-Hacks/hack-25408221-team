@@ -95,3 +95,24 @@ class UserWithSession(BaseModel):
     phone: Optional[str] = None
     has_recording: bool = False
     session: Optional[SessionResponse] = None
+
+
+class RatingEvent(BaseModel):
+    id: str
+    session_id: str
+    indicator: str
+    quote: str
+    band: str
+    rater_type: str
+    rater_id: Optional[str] = None
+    status: str
+    created_at: datetime
+
+
+class RatingEventCreate(BaseModel):
+    session_id: str
+    indicator: str
+    quote: str
+    band: str
+    rater_type: str
+    rater_id: Optional[str] = None

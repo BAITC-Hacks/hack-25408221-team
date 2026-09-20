@@ -1,7 +1,14 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from app.domain.entities import Session, SessionCreate, User, UserCreate
+from app.domain.entities import (
+    RatingEvent,
+    RatingEventCreate,
+    Session,
+    SessionCreate,
+    User,
+    UserCreate,
+)
 
 
 class UserRepositoryInterface(ABC):
@@ -63,6 +70,31 @@ class SessionRepositoryInterface(ABC):
 
     @abstractmethod
     async def mark_incomplete(self, session_id: str) -> Session:
+        pass
+
+
+class RatingEventRepositoryInterface(ABC):
+    @abstractmethod
+    async def create(self, rating_event: RatingEventCreate) -> RatingEvent:
+        pass
+
+    @abstractmethod
+    async def list_by_session(self, session_id: str) -> List[RatingEvent]:
+        pass
+
+    @abstractmethod
+    async def get_by_id(self, event_id: str) -> Optional[RatingEvent]:
+        pass
+
+    @abstractmethod
+    async def update_status(
+        self,
+        event_id: str,
+        status: str,
+        rater_id: Optional[str] = None,
+        band: Optional[str] = None,
+        quote: Optional[str] = None,
+    ) -> RatingEvent:
         pass
 
 
