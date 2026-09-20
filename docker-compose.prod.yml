@@ -97,7 +97,6 @@ services:
 
   # Override backend to inject Hetzner/local DB host + wire volumes
   backend:
-    ports: []
     env_file:
       - ./backend/.env
     environment:
@@ -120,7 +119,6 @@ services:
       start_period: 15s
 
   frontend:
-    ports: []
     depends_on:
       backend:
         condition: service_healthy
