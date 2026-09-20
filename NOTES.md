@@ -1257,3 +1257,55 @@ changes" scope:
 
 All 25 tasks in PART C's ordering (A1–A9, B1–B15) are done as of this entry; nothing was left
 incomplete or silently dropped.
+
+## SPEC: Scoring core and committee view
+
+### Section 0 — security checklist (confirmed before starting P1–P4)
+
+Per the new SPEC's mandatory first step, re-verified each of the 6 items against the actual
+routes rather than trusting the prior sprint's NOTES.md claims above. Two items were still open
+despite being logged as fixed; two more were exposed by code paths the checklist didn't name
+directly. All are now fixed; see the commits that follow this entry for detail per item.
+
+1. **IDOR on recordings — was OPEN, now FIXED.** B8 (earlier in this file) only added an
+   ownership check to `POST /api/upload-recording`. `GET /api/recording/{session_id}` and
+   `GET /api/recording-url/{session_id}` (`backend/app/api/session_routes.py`) had no ownership
+   check at all — any authenticated user (`/recording`) or any holder of any valid JWT
+   (`/recording-url`, which doesn't even use `get_current_user`) could read any other applicant's
+   presigned recording URL by guessing/enumerating `session_id`. Fixed: both now require the
+   caller to be the session's owner or an admin.
+2. **IDOR on uploads — confirmed FIXED**, matches B8's claim. `POST /api/upload-recording`
+   correctly checks `session_obj.user_id != current_user.id` (session_routes.py) before writing.
+   No change needed.
+3. **Path traversal — not named in the prior sprint, was OPEN, now FIXED.**
+   `GET /api/uploads/{file_path:path}` built `Path("uploads") / file_path` and only checked
+   `.exists()`/`.is_file()` — a `file_path` containing `../` segments was never rejected, and the
+   route also had no ownership check (any valid JWT, from any user, granted access to any file).
+   Fixed: resolve the path and reject anything that escapes the uploads base directory, and
+   require the session embedded in the `recordings/{session_id}/{filename}` key to belong to the
+   caller or an admin.
+4. **`/users` access control — not named in the prior sprint, was OPEN, now FIXED.**
+   `GET /api/users` and `GET /api/users/{user_id}` (`backend/app/api/user_routes.py`) required
+   only `get_current_user` — no role or ownership check — so any authenticated applicant could
+   list every other applicant's name/email/phone/session/evaluation, or fetch any one of them
+   directly by id. (The admin-only equivalents at `/api/admin/users[/​{id}]` already existed and
+   are unaffected.) Fixed: list now requires admin; detail now requires the caller be the target
+   user or an admin.
+5. **Token-in-URL — confirmed still OPEN, accepted as a scoped, documented tradeoff.**
+   `/api/recording-url/{session_id}` and `/api/uploads/{file_path:path}` take the auth JWT as a
+   `?token=` query param because both are hit as plain URLs (`<video src>`, redirect targets) that
+   can't attach an `Authorization` header. This does mean the full-access 24h login token can end
+   up in proxy/browser logs. Not redesigned in this pass (would need a separate short-lived,
+   single-purpose media token, which is a real but separate feature, not a checklist-item bugfix)
+   — but items 1 and 3 above now mean a leaked token alone is no longer sufficient to read
+   *another* user's recording, only the leaker's own, which meaningfully shrinks the blast radius.
+   Left as a follow-up under "Remaining" below.
+6. **Rate limits — was PARTIALLY open, now FIXED.** `/api/login` (5/min) and `/api/register`
+   (10/min) already had `slowapi` limits (B14 confirmed these work correctly). The Live websocket
+   connect path already has B14's own in-process throttle. `POST /api/sessions` (session
+   creation) had no limit at all. Fixed: added a 10/minute-per-IP limit, reusing the existing
+   shared `Limiter` instance from `user_routes.py` rather than introducing a second one.
+7. **Upload race conditions — confirmed FIXED**, matches B8's claim. `UploadRecordingUseCase`
+   writes to the deterministic key `recordings/{session_id}/{filename}` and re-uploads overwrite
+   in place; `test_upload_recording.py::test_concurrent_uploads_to_same_session_both_succeed`
+   already covers this. No change needed.
