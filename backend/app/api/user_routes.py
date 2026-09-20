@@ -5,7 +5,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_admin
 from app.core.security import create_access_token
 from app.domain.entities import UserCreate, UserLogin
 from app.infrastructure.database import get_session
@@ -92,7 +92,7 @@ async def login(
 
 @router.get("/users")
 async def list_users(
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_admin),
     use_case: ListUsersUseCase = Depends(_get_list_users_use_case),
 ):
     users = await use_case.execute()
@@ -105,6 +105,9 @@ async def get_user(
     current_user=Depends(get_current_user),
     use_case: GetUserUseCase = Depends(_get_get_user_use_case),
 ):
+    if current_user.id != user_id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="You do not have access to this user")
+
     user_with_session, error = await use_case.execute(user_id)
     if error:
         raise HTTPException(status_code=404, detail=error)
