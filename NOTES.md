@@ -1319,3 +1319,57 @@ Section 0 is complete: items 1, 3, 4, and 6 fixed (one commit each, each with a 
 items 2 and 7 confirmed already fixed with no change needed; item 5 accepted as a documented,
 scoped tradeoff (see "Remaining" item 7 above). Full suite green (59 passed) after every commit.
 Proceeding to P1 (T13–T18) next.
+
+### P1 — Bias removal (checklist)
+
+Per Section 1's principles ("background never enters a score," "fluency/grammar/vocabulary/
+accent never enter competency scores," "no AI-text detection," "no face/voice-affect
+analysis"), each vector below was independently reproduced/confirmed before being fixed —
+one commit per item, one regression test per behavior change, per Section 4's method.
+
+1. **Rubric doc scored family support and communication style — was OPEN, now FIXED.**
+   `backend/docs/assessment_rubric.md` explicitly listed Q6 (family support) and
+   "communication quality" (grammar/pacing/articulation) as criteria that move the score/
+   band. Reframed those sections as context recorded for the committee, never scored.
+   Commit `f304a62`.
+2. **Live-interview prompt and analysis prompt could weight family support / communication
+   style into the verdict — was OPEN, now FIXED.** `app/interview/prompts.py`
+   (`build_system_instruction`, `build_end_session_tool`) and
+   `analyze_session_use_case.py`'s `ANALYSIS_PROMPT` now explicitly instruct the model to
+   record the Q6 answer and communication observations as plain fields only, forbidden from
+   feeding `overall_score`/`recommendation`. Verified via a prompt-construction test
+   asserting the forbidding instruction text is present (Gemini's actual behavior isn't
+   unit-testable, so this locks the contract instead). Commit `96030f7`.
+3. **AI-text detection was a live, callable signal — was OPEN, now FIXED.** Deleted
+   `POST /api/sessions/{id}/detect-ai`, `app/ml/ai_detection.py` (Sapling integration), and
+   the frontend's AI-detection panel/`api.detectAI` call site. Test: route returns 404; full
+   suite still green. Commit `fbafe88`.
+4. **Fluency/CEFR and communication/confidence/language fields reached decision-adjacent
+   aggregators — was OPEN, now FIXED.** `app/ml/error_analysis.py`'s
+   `detect_evaluation_inconsistencies`/`identify_edge_cases` and
+   `app/ml/explainability.py`'s `explain_recommendation` read `applicant_data`'s
+   `language_used`/`confidence_level`/`communication_quality` and turned them into
+   triage-feeding edge-case flags (`non_english_interview`, `low_confidence_assessment`,
+   `poor_communication`), an inconsistency type (`communication_score_mismatch`), and a
+   "Communication quality: excellent/good/poor" factor shown as a reason for the
+   recommendation. Fixed by removing the `applicant_data` parameter (and the bodies that
+   read it) from all three functions entirely — not just unused, structurally incapable of
+   reading those fields now — and updating every call site (`scorer.py`, `demo_routes.py`,
+   `enhanced_analysis.py`). `app/ml/fairness.py` and `app/ml/evaluation.py` still read these
+   fields for aggregate, cross-session bias-*detection* (parity checks, confidence
+   calibration) — that's the audit tooling this SPEC exists to make possible, not a
+   violation, so left unchanged. New tests in `tests/test_bias_removal.py` (3 tests) assert
+   none of the three fixed functions can produce a fluency/background-derived signal. Full
+   suite green (65 passed) after this change. Commit `f046861`.
+5. **Face/voice-affect analysis — confirmed absent, no fix needed.** Verified via two
+   independent methods: (a) keyword grep for affect/emotion/facial/video-analysis terms
+   across `backend/app/ml`, `frontend/app`, `frontend/components`, `frontend/lib` — the only
+   hits were unrelated survey-question copy using "affects"/"affected" as plain English
+   verbs; (b) full read of `backend/requirements.txt` — no image/video/audio-ML dependency
+   (no OpenCV, no DeepFace, no librosa) beyond `google-genai`, which is used only for the
+   Live API's text/audio streaming, not affect scoring. Nothing to remove.
+6. **This checklist** — written after item 5's confirmation, closing out P1. All 5 bias
+   vectors above are now fixed or confirmed absent; full suite green (65 passed) throughout.
+
+P1 is complete. Proceeding to P2 (scoring core — `motivation_university`, `leadership`,
+`prior_experience` only, per the cut line) next.
