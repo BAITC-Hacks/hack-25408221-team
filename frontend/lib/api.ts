@@ -127,4 +127,57 @@ export const api = {
     fetchApi<{ total: number; page: number; page_size: number; pages: number; items: any[] }>(
       `/api/admin/sessions?page=${page}&page_size=${pageSize}`
     ),
+
+  adminGetCommitteeGrid: () =>
+    fetchApi<{ items: CommitteeGridRow[] }>("/api/admin/committee"),
+
+  adminGetCommitteeContext: (sessionId: string) =>
+    fetchApi<CommitteeContext>(`/api/admin/committee/${sessionId}`),
+
+  adminDecideRatingEvent: (
+    sessionId: string,
+    eventId: string,
+    payload: { status: "accepted" | "rejected"; band?: string; quote?: string }
+  ) =>
+    fetchApi<RatingEvent>(`/api/admin/sessions/${sessionId}/rating-events/${eventId}/decide`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+}
+
+export type RatingIndicatorKey = "motivation_university" | "leadership" | "prior_experience"
+
+export type RatingEvent = {
+  id: string
+  session_id: string
+  indicator: string
+  quote: string
+  band: string
+  rater_type: "model" | "human"
+  rater_id: string | null
+  status: "proposed" | "accepted" | "rejected"
+  created_at: string
+}
+
+export type CommitteeIndicatorCell = {
+  band: string
+  status: "proposed" | "accepted" | "rejected"
+  rater_type: "model" | "human"
+} | null
+
+export type CommitteeGridRow = {
+  session_id: string
+  user_id: string
+  user_name: string | null
+  program: string
+  indicators: Record<RatingIndicatorKey, CommitteeIndicatorCell>
+}
+
+export type CommitteeContext = {
+  session_id: string
+  user_id: string
+  user_name: string | null
+  program: string
+  transcript: { role: string; text: string }[] | null
+  rating_events: Record<RatingIndicatorKey, RatingEvent[]>
 }

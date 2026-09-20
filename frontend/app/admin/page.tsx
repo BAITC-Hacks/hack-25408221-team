@@ -342,6 +342,9 @@ export default function AdminPage() {
               inVision U
               <span className="ml-1 text-xs font-normal text-muted-foreground">Admin</span>
             </Link>
+            <Link href="/admin/committee" className="text-sm text-muted-foreground hover:text-foreground">
+              Committee Review
+            </Link>
           </div>
           <div className="flex items-center gap-4">
             <Button variant="outline" size="sm">
