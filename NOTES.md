@@ -1455,5 +1455,70 @@ manual browser verification follow as separate items below.
    session_id 404s. Full suite green (85 passed) throughout. Commit `fd2ae66`.
 
 *(T26/T27 — deeper committee tooling beyond grid+panel — remain out of scope per the cut
-line. Frontend committee page and manual browser verification are still pending; will be
-appended here once done.)*
+line.)*
+
+4. **Frontend committee page** (`frontend/app/admin/committee/page.tsx`, new). Grid via
+   `components/ui/table.tsx`: applicants × the 3 indicator columns, each cell a band badge
+   + `proposed`/`accepted`/`rejected` · `model`/`human` caption, no combined-score column
+   anywhere. Selecting a row opens a `components/ui/dialog.tsx` context panel (chose
+   Dialog over Drawer — Drawer had zero prior usage anywhere in the admin UI, Dialog's
+   Radix API was the simpler fit) showing, per indicator, every rating_event with its
+   verbatim quote and Accept/Reject buttons wired to P2's decide endpoint (buttons only
+   render on `status === "proposed"` rows, matching the endpoint's own transition rules),
+   plus a collapsible raw transcript. Added a "Committee Review" nav link on `/admin`.
+   `lib/api.ts` gained `adminGetCommitteeGrid`/`adminGetCommitteeContext`/
+   `adminDecideRatingEvent` plus the matching response types. Scope note: the SPEC's
+   phrase "accept/reject/edit controls" was implemented as accept/reject only — editing a
+   band/quote before accepting was not built (not requested again after the cut line's
+   T24 reference, and the decide endpoint's edit-payload fields go untested from the UI
+   side as a result; the endpoint itself still supports them for a future pass). Verified
+   via `tsc --noEmit` (no new errors beyond the pre-existing baseline) and `next build`
+   (compiles, `/admin/committee` listed as a static route). Commit `ac3495e`.
+5. **Manual browser verification — partially blocked, disclosed rather than skipped.**
+   This environment has no AWS/Aurora credentials (`aws sts get-caller-identity` →
+   `InvalidClientTokenId`) and no local Postgres (`psql`/`pg_isready` not found), so the
+   real app server as documented in `README.md` cannot be started here at all; separately,
+   no browser-automation tool is available in this session, so literal point-and-click
+   verification was never possible regardless of the backend. Substitute verification
+   actually performed: a throwaway, non-committed harness (`/tmp/invision_dev_server.py`,
+   not part of the repo) that mirrors `tests/conftest.py`'s sqlite `StaticPool` override
+   but runs the *real* `uvicorn` app process and the *real* `app/scripts/seed.py` seed
+   logic (with only Gemini calls faked, same fake used by `test_seed_script.py`), plus a
+   real `next dev` frontend pointed at it. Confirmed end-to-end over real HTTP against
+   both real servers: admin login; `GET /api/admin/committee` grid returns all 3 seeded
+   applicants with correct per-indicator band/status/rater_type, including a human-decided
+   row correctly winning over a model proposal for the same indicator; `GET
+   /api/admin/committee/{session_id}` context panel returns the full per-indicator
+   rating_event list with real quotes and the transcript, matching the frontend's
+   `CommitteeContext` type exactly; `POST .../decide` on a proposed row flips it to
+   `status=accepted, rater_type=human`, and a fresh `GET` of the grid (i.e., what a page
+   reload would trigger) reflects that change — durability confirmed at the HTTP layer.
+   Backend CORS confirmed to allow the frontend's origin with credentials. The
+   `/admin/committee` route itself was confirmed served by the real Next dev server (200,
+   correct compiled bundle). What was **not** verified, and is being said explicitly
+   rather than glossed over: actually seeing the rendered badges/dialog in a browser
+   window, and physically clicking Accept/Reject — no tool in this session can do that.
+   Every behavior the UI *depends on* (the two GET shapes, the decide contract, CORS) was
+   proven against real running processes, not just unit tests, which is the closest
+   substitute available here. Flagged as a real gap for whoever next has an actual browser
+   available to click through once.
+
+## P4 — Demo seed data (checklist)
+
+1. **One-command seed script**, `backend/app/scripts/seed.py`, runnable as
+   `python -m app.scripts.seed`. Reuses the app's own `init_db()`/repositories/use-cases
+   (not raw SQL like the repo-root `create_admin.py`/`clean_db.py` scripts) so the seed
+   logic is itself unit-testable against the sqlite test fixtures. Creates 1 admin
+   (`admin@invision.demo`) and 3 applicants (Ada Lovelace/CS, Grace Hopper/Applied Math,
+   Alan Turing/CS), each with a completed session, a realistic 6-turn transcript, and
+   model-proposed rating_events via the real `ProposeRatingEventsUseCase` — so the
+   committee grid has real, non-synthetic-looking rows to demo against immediately.
+   Idempotent by email: re-running against an already-seeded DB creates nothing new.
+   Commit `ec8c0a4`.
+2. **Tests** (`tests/test_seed_script.py`): correct create-counts and admin role on first
+   run; full idempotency (all counts zero) on a second run; committee grid returns
+   non-empty rows with a populated indicator immediately after seeding, over a real HTTP
+   round trip through the app. Full suite green (87 passed) throughout. Commit `ec8c0a4`.
+
+P1–P4 are now complete per the cut line, with the one disclosed exception above (browser-
+only interaction, not the underlying behavior it would exercise).
