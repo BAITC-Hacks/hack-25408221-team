@@ -1427,3 +1427,33 @@ cut line — not built this pass.)*
 
 P2 is complete. Proceeding to P3 (committee view — grid + separate context panel only,
 per the cut line) next.
+
+### P3 — Committee view (checklist)
+
+Backend endpoints only so far (T24, T25 of the cut line); frontend (T24's UI half) and
+manual browser verification follow as separate items below.
+
+1. **`GET /api/admin/committee` grid endpoint.** One row per session; for each of the 3
+   in-scope indicators, the *current* rating_event only — the most recent human-decided
+   row if one exists, else the latest model-proposed row, else `null`
+   (`_current_event_per_indicator` in `admin_routes.py`). No blended/aggregate score field
+   anywhere in the response (Section 5, criterion 3; Section 1's "distribution to
+   committee, no hard thresholds"). Admin-only (`require_admin`). Commit `fd2ae66`.
+2. **`GET /api/admin/committee/{session_id}` context panel endpoint.** All rating_event
+   rows for the session, grouped by indicator (not collapsed to one "current" value),
+   plus the session transcript for reference — deliberately a different shape from the
+   grid, so the committee can see the actual distribution of proposals/decisions rather
+   than a second copy of the grid's summary. 404s for an unknown session. Commit
+   `fd2ae66`.
+3. **Tests** (`tests/test_admin_committee.py`): non-admin gets 403 on both endpoints; a
+   session with one proposed indicator shows that indicator's band/status/rater_type in
+   the grid with the other two `null`; a session with a human-accepted row shows that row
+   rather than an older/co-existing model proposal for the same indicator (the "human
+   wins" rule); the grid response contains no `overall_score`/`score`/`recommendation`
+   substring anywhere; the context panel returns every row for an indicator that has two
+   (a plain model proposal plus a separate one) alongside the transcript; unknown
+   session_id 404s. Full suite green (85 passed) throughout. Commit `fd2ae66`.
+
+*(T26/T27 — deeper committee tooling beyond grid+panel — remain out of scope per the cut
+line. Frontend committee page and manual browser verification are still pending; will be
+appended here once done.)*
