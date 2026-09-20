@@ -135,3 +135,23 @@ async def test_submit_application_requires_user_id(client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert res.status_code == 400
+
+
+async def test_create_session_is_rate_limited(client):
+    """Section 0 checklist item 6: POST /api/sessions had no rate limit at
+    all, unlike /api/login and /api/register -- unbounded session creation
+    is itself a cost/abuse vector (each one is a billable Gemini Live call
+    away from happening). Reuses the shared limiter from user_routes.py."""
+    user_id, token = await _register(client, "rate-limited@example.com")
+
+    statuses = []
+    for _ in range(11):
+        res = await client.post(
+            "/api/sessions",
+            json={"userId": user_id, "program": "General"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        statuses.append(res.status_code)
+
+    assert statuses[:10] == [200] * 10
+    assert statuses[10] == 429

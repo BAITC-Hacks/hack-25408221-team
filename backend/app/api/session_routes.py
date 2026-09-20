@@ -5,10 +5,11 @@ from typing import List, Optional
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.api.user_routes import limiter
 from app.config import settings
 from app.core.auth import get_current_user
 from app.core.security import decode_access_token
@@ -82,7 +83,9 @@ async def submit_application(
 
 
 @router.post("/sessions")
+@limiter.limit("10/minute")
 async def create_session(
+    request: Request,
     payload: dict,
     current_user=Depends(get_current_user),
     use_case: StartSessionUseCase = Depends(_get_start_session_use_case),
