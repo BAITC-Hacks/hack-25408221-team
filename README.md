@@ -117,6 +117,46 @@ inVision University replaces traditional admissions interviews with a real-time 
 
 ## Getting Started (local)
 
+The easiest way to run the entire stack (PostgreSQL database, FastAPI Backend, Next.js Frontend, and Caddy Reverse Proxy) is using **Docker Compose**.
+
+### Docker Compose Setup (Recommended)
+
+1. **Configure Environment Variables:**
+   Copy the example environment file:
+   ```bash
+   cp backend/.env.example backend/.env
+   ```
+   Open `backend/.env` and set your configuration variables:
+   * Set your `GEMINI_API_KEY` for the AI Voice Interviewer
+   * Generate and set a secure `JWT_SECRET` (e.g., `openssl rand -hex 32`)
+   * (Optional) Set `ADMIN_CREATION_SECRET` to enable the admin seeding endpoint
+
+2. **Start all services:**
+   ```bash
+   docker compose up -d --build
+   ```
+
+3. **Access the application:**
+   * **Frontend Dashboard:** [http://localhost:3000](http://localhost:3000)
+   * **Backend API Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
+   * **Unified Gateway (Caddy Proxy):** [http://localhost:8080](http://localhost:8080)
+
+4. **Seed the default Admin User:**
+   ```bash
+   curl -X POST http://localhost:8000/api/admin/create-admin \
+     -H "Content-Type: application/json" \
+     -d '{"email": "admin@admin.admin", "password": "Thcg5kEgkZR1URvtJZNUnC8PoceheUHJF", "name": "Admin", "secret": "<YOUR_ADMIN_CREATION_SECRET>"}'
+   ```
+
+5. **Stop all services:**
+   ```bash
+   docker compose down
+   ```
+
+---
+
+### Manual Setup (Without Docker)
+
 ### Prerequisites
 
 - Node.js 18+ and `pnpm`
