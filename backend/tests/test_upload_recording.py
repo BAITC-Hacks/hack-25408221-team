@@ -96,3 +96,54 @@ async def test_concurrent_uploads_to_same_session_both_succeed(client):
     for res in results:
         assert res.status_code == 200
         assert res.json()["ok"] is True
+
+
+async def test_get_recording_rejects_non_owner(client):
+    """Section 0 checklist item 1: /api/recording/{session_id} used to have
+    no ownership check at all -- any authenticated user could redirect to
+    any other applicant's recording by guessing the session_id."""
+    owner_id, owner_token = await _register(client, "rec-owner@example.com")
+    session_id = await _create_session(client, owner_id, owner_token)
+    await _upload_call(client, session_id, owner_token)
+
+    _, intruder_token = await _register(client, "rec-intruder@example.com")
+    res = await client.get(
+        f"/api/recording/{session_id}",
+        headers={"Authorization": f"Bearer {intruder_token}"},
+    )
+    assert res.status_code == 403
+
+
+async def test_get_recording_allows_owner(client):
+    owner_id, owner_token = await _register(client, "rec-owner2@example.com")
+    session_id = await _create_session(client, owner_id, owner_token)
+    await _upload_call(client, session_id, owner_token)
+
+    res = await client.get(
+        f"/api/recording/{session_id}",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert res.status_code in (302, 307)
+
+
+async def test_get_recording_url_rejects_non_owner(client):
+    """Section 0 checklist item 1: /api/recording-url/{session_id} decoded
+    the token but never looked up the resulting user, so any valid token
+    from any user unlocked any session's presigned recording URL."""
+    owner_id, owner_token = await _register(client, "rurl-owner@example.com")
+    session_id = await _create_session(client, owner_id, owner_token)
+    await _upload_call(client, session_id, owner_token)
+
+    _, intruder_token = await _register(client, "rurl-intruder@example.com")
+    res = await client.get(f"/api/recording-url/{session_id}?token={intruder_token}")
+    assert res.status_code == 403
+
+
+async def test_get_recording_url_allows_owner(client):
+    owner_id, owner_token = await _register(client, "rurl-owner2@example.com")
+    session_id = await _create_session(client, owner_id, owner_token)
+    await _upload_call(client, session_id, owner_token)
+
+    res = await client.get(f"/api/recording-url/{session_id}?token={owner_token}")
+    assert res.status_code == 200
+    assert "url" in res.json()

@@ -159,6 +159,16 @@ async def analyze_session(
     return result
 
 
+def _ensure_owner_or_admin(owner_user_id: Optional[str], role: Optional[str], user_id: Optional[str]) -> None:
+    """Both /recording and /recording-url expose another applicant's presigned
+    URL if not checked -- session_id alone is guessable/enumerable."""
+    if role == "admin":
+        return
+    if owner_user_id is not None and owner_user_id == user_id:
+        return
+    raise HTTPException(status_code=403, detail="You do not have access to this session")
+
+
 @router.get("/recording/{session_id}")
 async def get_recording(
     session_id: str,
@@ -169,6 +179,7 @@ async def get_recording(
     session_obj, error = await use_case.execute(session_id)
     if error or not session_obj or not session_obj.recording_url:
         raise HTTPException(status_code=404, detail="Recording not found")
+    _ensure_owner_or_admin(session_obj.user_id, current_user.role, current_user.id)
 
     fresh_url = await s3_client.get_presigned_url(session_obj.recording_url)
     return RedirectResponse(url=fresh_url)
@@ -179,6 +190,7 @@ async def get_recording_url(
     session_id: str,
     token: Optional[str] = Query(None),
     use_case: GetSessionUseCase = Depends(_get_get_session_use_case),
+    db_session: AsyncSession = Depends(get_session),
 ):
     if not token:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -186,9 +198,17 @@ async def get_recording_url(
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
+    # This route can't use the get_current_user dependency (it's hit as a
+    # plain URL, e.g. redirect target, that carries the token as a query
+    # param instead of an Authorization header) -- look the user up manually.
+    requesting_user = await UserRepository(db_session).get_by_id(payload.get("sub"))
+    if not requesting_user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
     session_obj, error = await use_case.execute(session_id)
     if error or not session_obj or not session_obj.recording_url:
         raise HTTPException(status_code=404, detail="Recording not found")
+    _ensure_owner_or_admin(session_obj.user_id, requesting_user.role, requesting_user.id)
 
     fresh_url = await s3_client.get_presigned_url(session_obj.recording_url)
     return {"url": fresh_url}
