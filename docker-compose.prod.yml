@@ -82,9 +82,8 @@ services:
       - "traefik.http.routers.invision-backend-https.entrypoints=https"
       - "traefik.http.routers.invision-backend-https.tls=true"
       - "traefik.http.routers.invision-backend-https.tls.certresolver=letsencrypt"
-      # Service definition
-      - "traefik.http.routers.invision-backend-https.service=invision-backend"
-      - "traefik.http.services.invision-backend.loadbalancer.server.port=8000"
+      # Service definition (corresponds to compile-time service backend)
+      - "traefik.http.services.backend.loadbalancer.server.port=8000"
 
   frontend:
     build:
@@ -111,9 +110,8 @@ services:
       - "traefik.http.routers.invision-frontend-https.entrypoints=https"
       - "traefik.http.routers.invision-frontend-https.tls=true"
       - "traefik.http.routers.invision-frontend-https.tls.certresolver=letsencrypt"
-      # Service definition
-      - "traefik.http.routers.invision-frontend-https.service=invision-frontend"
-      - "traefik.http.services.invision-frontend.loadbalancer.server.port=3000"
+      # Service definition (corresponds to compile-time service frontend)
+      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
 
 volumes:
   pgdata:
