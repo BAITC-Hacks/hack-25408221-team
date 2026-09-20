@@ -1254,6 +1254,11 @@ changes" scope:
    (documented in both), but would need to move to a shared store (e.g. Redis) before the app
    could safely run with more than one worker/instance. Not a bug today; a scaling constraint to
    revisit if the deployment topology changes.
+7. **Token-in-URL on `/api/recording-url/{session_id}` and `/api/uploads/{file_path:path}`**
+   (Section 0 checklist item 5, below) — the full-access 24h login JWT is passed as `?token=`
+   because both routes are hit as plain URLs that can't carry an `Authorization` header. Fixing
+   this properly needs a separate short-lived, single-purpose media token; out of scope for a
+   checklist bugfix pass.
 
 All 25 tasks in PART C's ordering (A1–A9, B1–B15) are done as of this entry; nothing was left
 incomplete or silently dropped.
@@ -1299,7 +1304,7 @@ directly. All are now fixed; see the commits that follow this entry for detail p
    single-purpose media token, which is a real but separate feature, not a checklist-item bugfix)
    — but items 1 and 3 above now mean a leaked token alone is no longer sufficient to read
    *another* user's recording, only the leaker's own, which meaningfully shrinks the blast radius.
-   Left as a follow-up under "Remaining" below.
+   Left as a follow-up under "Remaining" above (item 7).
 6. **Rate limits — was PARTIALLY open, now FIXED.** `/api/login` (5/min) and `/api/register`
    (10/min) already had `slowapi` limits (B14 confirmed these work correctly). The Live websocket
    connect path already has B14's own in-process throttle. `POST /api/sessions` (session
@@ -1309,3 +1314,8 @@ directly. All are now fixed; see the commits that follow this entry for detail p
    writes to the deterministic key `recordings/{session_id}/{filename}` and re-uploads overwrite
    in place; `test_upload_recording.py::test_concurrent_uploads_to_same_session_both_succeed`
    already covers this. No change needed.
+
+Section 0 is complete: items 1, 3, 4, and 6 fixed (one commit each, each with a regression test);
+items 2 and 7 confirmed already fixed with no change needed; item 5 accepted as a documented,
+scoped tradeoff (see "Remaining" item 7 above). Full suite green (59 passed) after every commit.
+Proceeding to P1 (T13–T18) next.
