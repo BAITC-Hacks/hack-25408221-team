@@ -74,9 +74,9 @@ services:
       # HTTP Router (redirect to HTTPS)
       - "traefik.http.routers.invision-backend-http.rule=Host(`invision-api.2.29.37.96.nip.io`)"
       - "traefik.http.routers.invision-backend-http.entrypoints=http"
-      - "traefik.http.routers.invision-backend-http.middlewares=redirect-to-https"
+      - "traefik.http.routers.invision-backend-http.middlewares=redirect-to-https-backend"
       # MIDDLEWARE definition for redirect
-      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.redirect-to-https-backend.redirectscheme.scheme=https"
       # HTTPS Router
       - "traefik.http.routers.invision-backend-https.rule=Host(`invision-api.2.29.37.96.nip.io`)"
       - "traefik.http.routers.invision-backend-https.entrypoints=https"
@@ -104,7 +104,9 @@ services:
       # HTTP Router (redirect to HTTPS)
       - "traefik.http.routers.invision-frontend-http.rule=Host(`invision.2.29.37.96.nip.io`)"
       - "traefik.http.routers.invision-frontend-http.entrypoints=http"
-      - "traefik.http.routers.invision-frontend-http.middlewares=redirect-to-https"
+      - "traefik.http.routers.invision-frontend-http.middlewares=redirect-to-https-frontend"
+      # MIDDLEWARE definition for redirect
+      - "traefik.http.middlewares.redirect-to-https-frontend.redirectscheme.scheme=https"
       # HTTPS Router
       - "traefik.http.routers.invision-frontend-https.rule=Host(`invision.2.29.37.96.nip.io`)"
       - "traefik.http.routers.invision-frontend-https.entrypoints=https"

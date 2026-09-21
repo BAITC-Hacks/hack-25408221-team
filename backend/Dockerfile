@@ -39,4 +39,4 @@ EXPOSE 8000
 # --ws websockets: explicit websockets library for binary PCM audio frame streaming.
 # `alembic upgrade head` runs on every start (idempotent) since the schema is owned
 # by migrations, not by create_all-at-startup.
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --ws websockets"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host :: --port 8000 --workers 1 --ws websockets"]
