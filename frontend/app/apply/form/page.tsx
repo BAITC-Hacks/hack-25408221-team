@@ -22,6 +22,8 @@ const tabs: { id: TabId; label: string }[] = [
   { id: "certificate", label: "Certificate of Social Status" },
 ]
 
+type FormErrors = Record<string, string>
+
 function ApplicationFormContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -47,6 +49,7 @@ function ApplicationFormContent() {
 
   const [formData, setFormData] = useState<Record<string, unknown>>({})
   const [formErrors, setFormErrors] = useState<FormErrors>({})
+  const [errorTab, setErrorTab] = useState<TabId | null>(null)
   const [completedTabs, setCompletedTabs] = useState<Set<TabId>>(new Set())
   const [submitting, setSubmitting] = useState(false)
   const [submitStatus, setSubmitStatus] = useState<"idle" | "success" | "error">("idle")
@@ -89,11 +92,16 @@ function ApplicationFormContent() {
     }
 
     setFormErrors(newErrors)
+    setErrorTab(isValid ? null : activeTab)
     return isValid
   }
 
   const renderTabContent = () => {
-    const props = { formData, updateFormData, showErrors: Object.keys(formErrors).length > 0 }
+    const props = {
+      formData,
+      updateFormData,
+      showErrors: errorTab === activeTab && Object.keys(formErrors).length > 0,
+    }
     switch (activeTab) {
       case "personal":
         return <PersonalInfoTab {...props} />
@@ -116,6 +124,7 @@ function ApplicationFormContent() {
     const currentIndex = tabs.findIndex((tab) => tab.id === activeTab)
     setCompletedTabs((prev) => new Set([...prev, activeTab]))
     setFormErrors({})
+    setErrorTab(null)
     
     if (currentIndex < tabs.length - 1) {
       setActiveTab(tabs[currentIndex + 1].id)
@@ -267,12 +276,16 @@ function ApplicationFormContent() {
               {tabs.map((tab) => {
                 const isActive = activeTab === tab.id
                 const isCompleted = completedTabs.has(tab.id)
-                const hasError = Object.keys(formErrors).length > 0 && !isCompleted && !isActive
+                const hasError = tab.id === errorTab && Object.keys(formErrors).length > 0
                 
                 return (
                   <button
                     key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
+                    onClick={() => {
+                      setActiveTab(tab.id)
+                      setFormErrors({})
+                      setErrorTab(null)
+                    }}
                     className={`flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium transition-colors ${
                       isActive
                         ? "bg-[#CDFA1A] text-foreground"

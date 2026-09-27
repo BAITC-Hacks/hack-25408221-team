@@ -21,26 +21,35 @@ export function useMediaPermissions() {
     let hasVideo = false
 
     try {
-      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // Fast path: attempt both audio and video together in a single request
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
       hasAudio = true
-      audioStream.getTracks().forEach((t) => t.stop())
-    } catch (err: unknown) {
-      const name = err instanceof Error ? err.name : ""
-      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-        setMicDenied(true)
-      }
-    }
-
-    try {
-      const videoStream = await navigator.mediaDevices.getUserMedia({ video: true })
       hasVideo = true
-      videoStream.getTracks().forEach((t) => t.stop())
-    } catch (err: unknown) {
-      const name = err instanceof Error ? err.name : ""
-      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-        setCameraDenied(true)
-      } else if (name === "NotFoundError" || name === "DevicesNotFoundError" || name === "NotReadableError") {
-        setNoCamera(true)
+      stream.getTracks().forEach((t) => t.stop())
+    } catch {
+      // Fallback path: probe audio and video independently to isolate errors
+      try {
+        const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        hasAudio = true
+        audioStream.getTracks().forEach((t) => t.stop())
+      } catch (err: unknown) {
+        const name = err instanceof Error ? err.name : ""
+        if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+          setMicDenied(true)
+        }
+      }
+
+      try {
+        const videoStream = await navigator.mediaDevices.getUserMedia({ video: true })
+        hasVideo = true
+        videoStream.getTracks().forEach((t) => t.stop())
+      } catch (err: unknown) {
+        const name = err instanceof Error ? err.name : ""
+        if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+          setCameraDenied(true)
+        } else if (name === "NotFoundError" || name === "DevicesNotFoundError" || name === "NotReadableError") {
+          setNoCamera(true)
+        }
       }
     }
 

@@ -27,6 +27,31 @@ export function EducationTab({ formData, updateFormData, showErrors }: Education
         </p>
         <div className="mt-2 h-px bg-border" />
 
+        <div className="mt-4 p-4 rounded-lg bg-muted/30 border border-border flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <p className="text-sm font-semibold">Online English Placement Gateway</p>
+            <p className="text-xs text-muted-foreground">
+              Verify your official IELTS TRF number or complete our 20-minute online placement test.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <a href="/english/ielts" target="_blank" rel="noopener noreferrer">
+              <Button size="sm" variant="outline" type="button">
+                Verify IELTS
+              </Button>
+            </a>
+            <a href="/english/test" target="_blank" rel="noopener noreferrer">
+              <Button
+                size="sm"
+                className="bg-[#CDFA1A] text-foreground hover:bg-[#CDFA1A]/90 font-medium"
+                type="button"
+              >
+                Take Placement Test
+              </Button>
+            </a>
+          </div>
+        </div>
+
         <div className="mt-6">
           <label className="mb-2 block text-sm font-medium">Exam</label>
           <div className="flex gap-2">

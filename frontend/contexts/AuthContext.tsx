@@ -61,6 +61,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("userId")
     localStorage.removeItem("userName")
     localStorage.removeItem("userEmail")
+    localStorage.removeItem("userPhone")
+    localStorage.removeItem("program")
+    localStorage.removeItem("videoSubmitted")
     clearCookies()
   }
 
@@ -96,17 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = () => {
     setUser(null)
     setToken(null)
-    
-    localStorage.removeItem(TOKEN_KEY)
-    localStorage.removeItem(USER_KEY)
-    localStorage.removeItem("userId")
-    localStorage.removeItem("userName")
-    localStorage.removeItem("userEmail")
-    localStorage.removeItem("userPhone")
-    localStorage.removeItem("program")
-    localStorage.removeItem("videoSubmitted")
-    
-    clearCookies()
+    clearAuthData()
   }
 
   return (

@@ -16,25 +16,13 @@ export function CertificateTab({ formData, updateFormData, showErrors }: Certifi
   const [additionalInfo, setAdditionalInfo] = useState(
     (formData.additionalInfo as string) || ""
   )
-  const [fatherIncomeCert, setFatherIncomeCert] = useState(
-    (formData.fatherIncomeCert as string) || ""
-  )
-  const [motherIncomeCert, setMotherIncomeCert] = useState(
-    (formData.motherIncomeCert as string) || ""
-  )
-  const [guardianIncomeCert, setGuardianIncomeCert] = useState(
-    (formData.guardianIncomeCert as string) || ""
-  )
 
   useEffect(() => {
     updateFormData({
       hasSocialStatusCertificate,
       additionalInfo,
-      fatherIncomeCert,
-      motherIncomeCert,
-      guardianIncomeCert,
     })
-  }, [hasSocialStatusCertificate, additionalInfo, fatherIncomeCert, motherIncomeCert, guardianIncomeCert])
+  }, [hasSocialStatusCertificate, additionalInfo])
 
   return (
     <div className="space-y-8">

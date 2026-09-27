@@ -1,0 +1,26 @@
+[
+  {
+    "id": "W-OP-001",
+    "section": "writing",
+    "kind": "opinion",
+    "prompt": "Some people think university applicants should be judged only on exam results. Do you agree or disagree? Give reasons.",
+    "image": null,
+    "status": "approved"
+  },
+  {
+    "id": "W-OP-002",
+    "section": "writing",
+    "kind": "opinion",
+    "prompt": "Is it better for students to study alone or in groups? Explain your view with examples.",
+    "image": null,
+    "status": "approved"
+  },
+  {
+    "id": "W-DESC-001",
+    "section": "writing",
+    "kind": "describe_picture",
+    "prompt": "Write an email to a tutor explaining that your group cannot finish a project by Friday. Explain the reason, describe what you have completed, and propose a new deadline.",
+    "image": null,
+    "status": "approved"
+  }
+]

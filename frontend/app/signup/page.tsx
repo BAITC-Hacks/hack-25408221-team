@@ -76,6 +76,9 @@ export default function SignUpPage() {
       const role = decoded?.role || "user"
       
       login(data.userId, data.name, data.accessToken, formData.email, role)
+      if (formData.phone) {
+        localStorage.setItem("userPhone", formData.phone)
+      }
       
       router.push("/apply")
     } catch (err) {

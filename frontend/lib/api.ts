@@ -87,7 +87,6 @@ export const api = {
     const options: RequestInit = {
       method: "POST",
       body: JSON.stringify({ userId, program }),
-      credentials: "include",
     }
     if (token) {
       options.headers = { Authorization: `Bearer ${token}` }

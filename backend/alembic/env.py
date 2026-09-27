@@ -14,7 +14,10 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-from app.infrastructure.models import UserTable, SessionTable
+from app.infrastructure.models import UserTable, SessionTable, RatingEventTable
+from app.english.infra.models import (
+    Applicant, IeltsCheck, Item, TestSession, Response, Checkin, ProctorEvent, Review
+)
 from sqlmodel import SQLModel
 
 target_metadata = SQLModel.metadata

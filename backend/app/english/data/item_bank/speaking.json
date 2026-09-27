@@ -1,0 +1,47 @@
+[
+  {
+    "id": "S-PERS-001",
+    "section": "speaking",
+    "kind": "personal",
+    "prompt": "Tell me about a place you would like to visit and why.",
+    "prep_s": 15,
+    "answer_s": 45,
+    "status": "approved"
+  },
+  {
+    "id": "S-PERS-002",
+    "section": "speaking",
+    "kind": "personal",
+    "prompt": "Describe a skill you learned recently and how you learned it.",
+    "prep_s": 15,
+    "answer_s": 45,
+    "status": "approved"
+  },
+  {
+    "id": "S-PIC-001",
+    "section": "speaking",
+    "kind": "picture",
+    "prompt": "Imagine two students planning a group project. One wants to finish quickly; the other wants more time to improve the work. Explain their different priorities and suggest how they could agree on a plan.",
+    "prep_s": 15,
+    "answer_s": 60,
+    "status": "approved"
+  },
+  {
+    "id": "S-OP-001",
+    "section": "speaking",
+    "kind": "opinion",
+    "prompt": "Do you think it is better to live in a big city or a small town? Why?",
+    "prep_s": 15,
+    "answer_s": 60,
+    "status": "approved"
+  },
+  {
+    "id": "S-FU-001",
+    "section": "speaking",
+    "kind": "followup",
+    "prompt": "Can you tell me a bit more about that?",
+    "prep_s": 10,
+    "answer_s": 45,
+    "status": "approved"
+  }
+]

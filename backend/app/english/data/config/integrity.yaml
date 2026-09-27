@@ -1,0 +1,26 @@
+# Event weights for the integrity score. See Module 4 of the design doc.
+weights:
+  window_blur: 3
+  camera_lost: 5
+  screen_share_stopped: 5
+  second_monitor: 8
+  face_check: 2
+  monitoring_unavailable: 4
+  clipboard_blocked: 3
+  screen_token_missing: 8
+  face_multi: 8
+  speech_detected: 6
+  burst_insert: 5
+  screen_share_ended: 5
+  heartbeat_gap: 4
+  seq_gap: 4
+  fullscreen_exit: 3
+  paste_attempt: 3
+  tab_hidden_base: 2
+  tab_hidden_per_10s: 1
+  face_none: 2
+  window_mgmt_denied: 1
+
+thresholds:
+  amber: 8
+  red: 20

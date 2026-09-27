@@ -12,6 +12,7 @@ from app.api.admin_routes import router as admin_router
 from app.api.validation_routes import router as validation_router
 from app.api.fairness_routes import router as fairness_router
 from app.api.demo_routes import router as demo_router
+from app.api.english_routes import router as english_router
 from app.config import settings
 from app.infrastructure.database import init_db
 
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(validation_router)
     app.include_router(fairness_router)
     app.include_router(demo_router)
+    app.include_router(english_router)
 
     @app.on_event("startup")
     async def startup():
