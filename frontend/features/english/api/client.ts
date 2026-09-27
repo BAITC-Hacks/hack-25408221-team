@@ -13,12 +13,17 @@ export const ENGLISH_SESSION_KEY = "eg_session_id"
 export const ENGLISH_ADMIN_TOKEN_KEY = "eg_admin_token"
 
 export function getDefaultApiUrl(): string {
-  const base = (
-    process.env.NEXT_PUBLIC_ENGLISH_GATE_API_URL ||
-    process.env.NEXT_PUBLIC_API_URL ||
-    ""
-  ).replace(/\/$/, "")
-  return `${base}/api/english`
+  if (process.env.NEXT_PUBLIC_ENGLISH_GATE_API_URL) {
+    return process.env.NEXT_PUBLIC_ENGLISH_GATE_API_URL.replace(/\/$/, "") + "/api/english"
+  }
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "") + "/api/english"
+  }
+  if (typeof window !== "undefined") {
+    return "/api/english"
+  }
+  const serverBase = process.env.API_URL || "http://127.0.0.1:8000"
+  return `${serverBase.replace(/\/$/, "")}/api/english`
 }
 
 export function getLocalToken(): string | null {

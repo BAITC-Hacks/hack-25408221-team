@@ -6,8 +6,7 @@ import { useRouter } from "next/navigation"
 import { Eye, EyeOff, ChevronDown } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 import { decodeToken, isTokenValid } from "@/lib/auth"
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+import { getApiBaseUrl } from "@/lib/api"
 
 export default function SignUpPage() {
   const router = useRouter()
@@ -42,7 +41,7 @@ export default function SignUpPage() {
     
     setLoading(true)
     try {
-      const res = await fetch(`${API_URL}/api/register`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

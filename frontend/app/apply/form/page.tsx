@@ -11,6 +11,7 @@ import { AIInterviewTab } from "@/components/form-tabs/ai-interview"
 import { CertificateTab } from "@/components/form-tabs/certificate"
 import { ExternalLink, CheckCircle2, Loader2, AlertCircle, CheckCircle } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
+import { getApiBaseUrl } from "@/lib/api"
 
 type TabId = "personal" | "contact" | "education" | "test" | "certificate"
 
@@ -139,8 +140,7 @@ function ApplicationFormContent() {
     setErrorMessage("")
 
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-      const res = await fetch(`${API_URL}/api/applications`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/applications`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

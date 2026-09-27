@@ -1,6 +1,16 @@
 import { isTokenValid } from "./auth"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+export function getApiBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")
+  }
+  if (typeof window !== "undefined") {
+    return ""
+  }
+  return "http://127.0.0.1:8000"
+}
+
+export const API_URL = getApiBaseUrl()
 
 const TOKEN_KEY = "accessToken"
 
@@ -24,7 +34,7 @@ export async function fetchApi<T>(endpoint: string, options: RequestInit = {}): 
     headers["Authorization"] = `Bearer ${token}`
   }
 
-  const response = await fetch(`${API_URL}${endpoint}`, {
+  const response = await fetch(`${getApiBaseUrl()}${endpoint}`, {
     ...options,
     headers,
   })

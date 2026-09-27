@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { getToken, api } from "@/lib/api"
+import { getToken, api, getApiBaseUrl } from "@/lib/api"
 import { useMediaPermissions } from "@/hooks/use-media-permissions"
 import { useRecordingUpload } from "@/hooks/use-recording-upload"
 import { useInterviewTimer } from "@/hooks/useInterviewTimer"
@@ -7,7 +7,6 @@ import { useAudioPlayback } from "@/hooks/useAudioPlayback"
 
 export type CallStatus = "idle" | "connecting" | "reconnecting" | "active" | "ended" | "error"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 const TOTAL_QUESTIONS = Number(process.env.NEXT_PUBLIC_TOTAL_QUESTIONS) || 6
 // B10: on an unexpected mid-interview close, retry the signaling socket to
 // the same session_id instead of ending the call outright. Capped and
@@ -137,7 +136,12 @@ export function useInterviewCall(userId: string | null) {
 
   const createSocket = useCallback((sid: string): WebSocket => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
-    const host = API_URL.replace(/.*\/\//, "").replace(/\/.*$/, "")
+    let host = window.location.host
+    if (process.env.NEXT_PUBLIC_WS_URL) {
+      host = process.env.NEXT_PUBLIC_WS_URL.replace(/^.*:\/\//, "").replace(/\/.*$/, "")
+    } else if (process.env.NEXT_PUBLIC_API_URL) {
+      host = process.env.NEXT_PUBLIC_API_URL.replace(/^.*:\/\//, "").replace(/\/.*$/, "")
+    }
     const token = getToken()
     const ws = new WebSocket(`${protocol}//${host}/ws/${sid}${token ? `?token=${token}` : ""}`)
     ws.binaryType = "arraybuffer"
@@ -162,7 +166,7 @@ export function useInterviewCall(userId: string | null) {
         "Authorization": `Bearer ${token}`,
       }
 
-      const res = await fetch(`${API_URL}/api/sessions`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/sessions`, {
         method: "POST",
         headers,
         body: JSON.stringify({ userId, program }),
