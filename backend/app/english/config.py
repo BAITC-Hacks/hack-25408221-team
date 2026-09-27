@@ -19,7 +19,7 @@ class EnglishSettings(BaseSettings):
     webhook_secret: str = "dev-webhook-secret"
 
     admin_email: str = "admin@invision.demo"
-    admin_password: str = "demo-admin-password"
+    admin_password: str = "admin123"
 
     gemini_model: str = "gemini-2.5-flash"
     whisper_model: str = "small"

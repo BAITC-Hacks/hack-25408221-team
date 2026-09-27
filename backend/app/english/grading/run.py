@@ -121,7 +121,7 @@ async def grade_session(
     beats = [e.ts_server for e in events if e.type == "heartbeat"]
     now = grading_started
     aware = lambda dt: dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-    coverage_gap = not beats or (now - aware(beats[-1])).total_seconds() > 90
+    coverage_gap = not beats or (aware(now) - aware(beats[-1])).total_seconds() > 90
     starts = [datetime.fromisoformat(value) for value in ts.section_started_at.values()]
     if beats and starts and (aware(beats[0])-min(aware(d) for d in starts)).total_seconds()>45:
         coverage_gap = True

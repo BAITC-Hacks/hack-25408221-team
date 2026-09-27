@@ -40,9 +40,3 @@ export function isTokenValid(token: string): boolean {
   if (isTokenExpired(token)) return false
   return true
 }
-
-export function getTokenExpiryTime(token: string): Date | null {
-  const payload = decodeToken(token)
-  if (!payload?.exp) return null
-  return new Date(payload.exp * 1000)
-}

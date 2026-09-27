@@ -33,11 +33,14 @@ import { EvaluationTab } from "./components/EvaluationTab"
 import { TranscriptTab } from "./components/TranscriptTab"
 import { RecordingTab } from "./components/RecordingTab"
 import { AnalysisTab } from "./components/AnalysisTab"
+import { EnglishGateTab } from "./components/EnglishGateTab"
+import { GraduationCap } from "lucide-react"
 
 const TABS = [
   { id: "personal", label: "Personal Info", icon: User },
   { id: "answers", label: "Interview Answers", icon: ClipboardList },
   { id: "evaluation", label: "Evaluation", icon: Award },
+  { id: "english", label: "English Gate", icon: GraduationCap },
   { id: "transcript", label: "Transcript", icon: FileText },
   { id: "recording", label: "Recording", icon: Video },
   { id: "analysis", label: "Deep Analysis", icon: BarChart3 },
@@ -183,6 +186,7 @@ export default function ApplicantDetailPage() {
               {activeTab === "personal" && <PersonalInfoTab applicant={applicant} />}
               {activeTab === "answers" && <AnswersTab applicant={applicant} />}
               {activeTab === "evaluation" && <EvaluationTab applicant={applicant} />}
+              {activeTab === "english" && <EnglishGateTab applicantId={applicant.id} />}
               {activeTab === "transcript" && <TranscriptTab applicant={applicant} />}
               {activeTab === "recording" && (
                 <RecordingTab

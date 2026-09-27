@@ -1,9 +1,9 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { ProctorResources, ProctorEvent } from "../types"
-import { sendProctorEvents } from "../api/endpoints"
-import { getFaceDetector, withDetectorLogging } from "./useFaceDetector"
+import { ProctorResources, ProctorEvent } from "@/features/english/types"
+import { sendProctorEvents } from "@/features/english/api/endpoints"
+import { getFaceDetector, withDetectorLogging } from "@/features/english/hooks/useFaceDetector"
 
 export function useProctor(
   sessionId: string | null,

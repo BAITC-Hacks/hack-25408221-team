@@ -133,10 +133,9 @@ async def demo_start(db: AsyncSession = Depends(get_db)):
 
 # ── Applicants ────────────────────────────────────────────────────────────────
 
-@router.post("/applicants", response_model=ApplicantOut)
+@router.post("/applicants", response_model=ApplicantOut, dependencies=[Depends(require_platform_key)])
 async def create_applicant(
     body: ApplicantCreate,
-    x_api_key: Optional[str] = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     existing = (
@@ -543,6 +542,23 @@ async def finish_session(
     return {"state": ts.state.value if hasattr(ts.state, "value") else str(ts.state), "placement": ts.placement}
 
 
+@router.post("/sessions/{session_id}/expire", dependencies=[Depends(session_guard)])
+async def expire(
+    session_id: str,
+    body: dict,
+    applicant_id: str = Depends(require_applicant),
+    db: AsyncSession = Depends(get_db),
+):
+    ts = await _own_session(db, session_id, applicant_id)
+    if ts.state in (SessionState.GRADING, "grading"):
+        return {"section_complete": True, "next_section": None, "state": "grading"}
+    if body.get("section") != ts.current_section:
+        raise conflict("section_changed")
+    if ts.current_section is None or not is_past_deadline(ts, Section(ts.current_section)):
+        raise conflict("section_not_expired")
+    return await expire_section(db, ts)
+
+
 # ── Admin Routes ──────────────────────────────────────────────────────────────
 
 @router.post("/admin/login", response_model=AdminLoginOut)
@@ -641,16 +657,29 @@ async def applicant_detail(
 ):
     applicant = await db.get(Applicant, applicant_id)
     if applicant is None:
+        applicant = (
+            await db.execute(select(Applicant).where(Applicant.external_id == applicant_id))
+        ).scalars().first()
+    if applicant is None:
         raise not_found("applicant")
 
     sessions = (
         await db.execute(
             select(TestSession)
-            .where(TestSession.applicant_id == applicant_id)
+            .where(TestSession.applicant_id == applicant.id)
             .order_by(TestSession.created_at.desc())
         )
     ).scalars().all()
     ts = sessions[0] if sessions else None
+
+    checks = (
+        await db.execute(
+            select(IeltsCheck)
+            .where(IeltsCheck.applicant_id == applicant.id)
+            .order_by(IeltsCheck.checked_at.desc())
+        )
+    ).scalars().all()
+    ielts = checks[0] if checks else None
 
     responses = []
     events = []
@@ -682,6 +711,16 @@ async def applicant_detail(
         "state": applicant.state.value if hasattr(applicant.state, "value") else str(applicant.state),
         "placement": applicant.placement,
         "placement_source": applicant.placement_source,
+        "ielts": {
+            "trf_number": ielts.trf_number,
+            "overall": ielts.overall,
+            "verdict": ielts.verdict,
+            "module": ielts.module,
+            "listening": ielts.listening,
+            "reading": ielts.reading,
+            "writing": ielts.writing,
+            "speaking": ielts.speaking,
+        } if ielts else None,
         "session": {
             "id": ts.id,
             "levels": ts.levels,
@@ -712,6 +751,168 @@ async def applicant_detail(
             for r in reviews
         ],
     }
+
+
+@router.post("/auth-link", response_model=ApplicantOut)
+async def auth_link_user(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Links or retrieves an English Gate applicant profile for the currently logged-in platform user."""
+    from app.core.auth import get_current_user
+    from fastapi.security import HTTPAuthorizationCredentials
+    auth = request.headers.get("Authorization")
+    if not auth or not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="missing_token")
+    token = auth.split(" ", 1)[1]
+    from app.core.security import decode_access_token
+    payload = decode_access_token(token)
+    if not payload or not payload.get("sub"):
+        raise HTTPException(status_code=401, detail="invalid_token")
+    user_id = payload["sub"]
+    from app.infrastructure.models import UserTable
+    user = await db.get(UserTable, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="user_not_found")
+
+    applicant = (
+        await db.execute(select(Applicant).where(Applicant.external_id == user.id))
+    ).scalars().first()
+    if applicant is None:
+        applicant = Applicant(
+            external_id=user.id,
+            full_name=user.name,
+            email=user.email,
+            state=ApplicantState.NEEDS_TEST,
+        )
+        db.add(applicant)
+        await db.commit()
+        await db.refresh(applicant)
+
+    return ApplicantOut(
+        id=applicant.id,
+        token=create_applicant_token(applicant.id),
+        state=applicant.state.value if hasattr(applicant.state, "value") else str(applicant.state),
+        placement=applicant.placement,
+        placement_source=applicant.placement_source,
+    )
+
+
+@router.get("/admin/sessions/{session_id}")
+async def session_detail(
+    session_id: str,
+    admin: str = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    ts = await db.get(TestSession, session_id)
+    if ts is None:
+        raise not_found("session")
+
+    responses = (
+        await db.execute(select(Response).where(Response.session_id == session_id))
+    ).scalars().all()
+    events = (
+        await db.execute(select(ProctorEvent).where(ProctorEvent.session_id == session_id).order_by(ProctorEvent.seq))
+    ).scalars().all()
+
+    applicant = await db.get(Applicant, ts.applicant_id)
+    items = {
+        i.id: i
+        for i in (
+            await db.execute(select(Item).where(Item.id.in_([r.item_id for r in responses])))
+        ).scalars()
+    } if responses else {}
+    reviews = (
+        await db.execute(select(Review).where(Review.session_id == ts.id).order_by(Review.created_at.desc()))
+    ).scalars().all()
+    return {
+        "full_name": applicant.full_name if applicant else "Unknown",
+        "email": applicant.email if applicant else "",
+        "state": ts.state.value if hasattr(ts.state, "value") else str(ts.state),
+        "reviews": [
+            {"decision": r.decision, "note": r.note, "reviewer": r.reviewer, "created_at": r.created_at}
+            for r in reviews
+        ],
+        "id": ts.id,
+        "applicant_id": ts.applicant_id,
+        "levels": ts.levels,
+        "flags": ts.flags,
+        "placement": ts.placement,
+        "integrity_score": ts.integrity_score,
+        "integrity_level": ts.integrity_level,
+        "responses": [
+            {
+                "id": r.id,
+                "prompt": items[r.item_id].content.get("prompt", items[r.item_id].content.get("text", "")) if r.item_id in items else "",
+                "item_id": r.item_id,
+                "section": r.section,
+                "answer": r.answer,
+                "media_path": r.media_path,
+                "correct": r.correct,
+                "grade": r.grade,
+            }
+            for r in responses
+        ],
+        "events": [
+            {"seq": e.seq, "type": e.type, "section": e.section, "ts_server": e.ts_server, "data": e.data}
+            for e in events
+        ],
+    }
+
+
+@router.post("/admin/reviews")
+async def create_review(
+    body: ReviewIn,
+    admin: str = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    if bool(body.session_id) == bool(body.ielts_check_id):
+        raise HTTPException(422, "exactly_one_review_target_required")
+    if not body.note or not body.note.strip():
+        raise HTTPException(422, "review_note_required")
+    if body.session_id:
+        ts = await db.get(TestSession, body.session_id)
+        if ts is None:
+            raise not_found("session")
+        if ts.state not in (SessionState.NEEDS_REVIEW, SessionState.DECIDED, "needs_review", "decided"):
+            raise HTTPException(409, "assessment_not_complete")
+        applicant = await db.get(Applicant, ts.applicant_id)
+        review = Review(session_id=ts.id, reviewer=admin, decision=body.decision, note=body.note)
+        db.add(review)
+
+        if body.decision == "retake":
+            applicant.state = ApplicantState.NEEDS_TEST
+            applicant.placement = None
+            applicant.placement_source = None
+            ts.state = SessionState.DECIDED
+        else:
+            applicant.placement = Placement(body.decision)
+            applicant.placement_source = PlacementSource.HUMAN
+            applicant.state = ApplicantState.PLACED
+            ts.state = SessionState.DECIDED
+            ts.placement = Placement(body.decision)
+        db.add(ts)
+        db.add(applicant)
+        await db.commit()
+        return {"ok": True}
+
+    if body.ielts_check_id:
+        if body.decision == "retake":
+            raise HTTPException(422, "retake_requires_session")
+        check = await db.get(IeltsCheck, body.ielts_check_id)
+        if check is None:
+            raise not_found("ielts_check")
+        applicant = await db.get(Applicant, check.applicant_id)
+        review = Review(ielts_check_id=check.id, reviewer=admin, decision=body.decision, note=body.note)
+        db.add(review)
+        applicant.placement = Placement(body.decision)
+        applicant.placement_source = PlacementSource.HUMAN
+        applicant.state = ApplicantState.PLACED
+        db.add(applicant)
+        await db.commit()
+        return {"ok": True}
+
+    raise HTTPException(status_code=400, detail="session_id_or_ielts_check_id_required")
 
 
 @router.post("/admin/sessions/{session_id}/decision")
@@ -751,11 +952,35 @@ async def submit_decision(
     return {"ok": True}
 
 
+@router.get("/admin/responses/{response_id}/audio")
+async def response_audio(
+    response_id: str,
+    admin: str = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    storage=Depends(get_storage_dep),
+):
+    response = await db.get(Response, response_id)
+    if response is None or not response.media_path:
+        raise not_found("recording")
+    try:
+        path = storage.local_path(response.media_path)
+    except ValueError:
+        raise not_found("recording")
+    if not Path(path).is_file():
+        raise not_found("recording")
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
+
+
 # ── Media Serving ─────────────────────────────────────────────────────────────
 
 @router.get("/media/{file_path:path}")
 async def get_media(file_path: str, storage=Depends(get_storage_dep)):
-    path = storage.local_path(file_path)
+    if file_path.startswith("sessions/") or ".." in file_path:
+        raise not_found("media_file")
+    try:
+        path = storage.local_path(file_path)
+    except ValueError:
+        raise not_found("media_file")
     if not Path(path).is_file():
         raise not_found("media_file")
     return FileResponse(path)

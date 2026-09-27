@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 async def seed_items(session: AsyncSession) -> int:
     item_bank_dir = Path(english_settings.item_bank_dir)
+    media_dir = item_bank_dir / "media"
+    if media_dir.is_dir():
+        import shutil
+        shutil.copytree(media_dir, english_settings.storage_local_path, dirs_exist_ok=True)
     count = 0
     for file in sorted(item_bank_dir.glob("*.json")):
         records = json.loads(file.read_text())

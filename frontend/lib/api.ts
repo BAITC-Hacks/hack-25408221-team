@@ -13,19 +13,6 @@ export function getToken(): string | null {
   return token
 }
 
-export function getStoredUser(): { userId: string; name: string } | null {
-  if (typeof window === "undefined") return null
-  
-  const userStr = localStorage.getItem("user")
-  if (!userStr) return null
-  
-  try {
-    return JSON.parse(userStr)
-  } catch {
-    return null
-  }
-}
-
 export async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = getToken()
   const headers: Record<string, string> = {
@@ -48,22 +35,6 @@ export async function fetchApi<T>(endpoint: string, options: RequestInit = {}): 
   }
 
   return response.json()
-}
-
-export async function fetchApiRaw(endpoint: string, options: RequestInit = {}): Promise<Response> {
-  const token = getToken()
-  const headers: Record<string, string> = {
-    ...(options.headers as Record<string, string>),
-  }
-
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`
-  }
-
-  return fetch(`${API_URL}${endpoint}`, {
-    ...options,
-    headers,
-  })
 }
 
 export const api = {
@@ -118,14 +89,17 @@ export const api = {
   getSessionMetrics: (sessionId: string) =>
     fetchApi<any>(`/api/metrics/sessions/${sessionId}`),
 
-  adminGetUsers: (page = 1, pageSize = 50) =>
-    fetchApi<{ total: number; page: number; page_size: number; pages: number; items: any[] }>(
-      `/api/admin/users?page=${page}&page_size=${pageSize}`
-    ),
-  adminGetSessions: (page = 1, pageSize = 50) =>
-    fetchApi<{ total: number; page: number; page_size: number; pages: number; items: any[] }>(
-      `/api/admin/sessions?page=${page}&page_size=${pageSize}`
-    ),
+  getEnglishAuthLink: () =>
+    fetchApi<{
+      id: string
+      token: string
+      state: string
+      placement: string | null
+      placement_source: string | null
+    }>("/api/english/auth-link", { method: "POST" }),
+
+  getEnglishApplicantStatus: (applicantId: string) =>
+    fetchApi<any>(`/api/english/admin/applicants/${applicantId}`),
 
   adminGetCommitteeGrid: () =>
     fetchApi<{ items: CommitteeGridRow[] }>("/api/admin/committee"),

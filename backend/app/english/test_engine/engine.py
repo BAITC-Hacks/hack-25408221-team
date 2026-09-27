@@ -24,11 +24,14 @@ _HARD_THRESHOLD = {Section.LISTENING: 3, Section.READING: 4}
 
 
 def _now() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
+
+
+def _aware(dt: datetime) -> datetime:
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
 async def _pick_items(db: AsyncSession, section: Section, stage: Stage, count: int, exclude: list[str] | None = None) -> list[Item]:
-    exclude = exclude or []
     result = await db.execute(
         select(Item)
         .where(Item.section == section, Item.stage == stage, Item.status == "approved")
@@ -114,7 +117,7 @@ def is_past_deadline(ts: TestSession, section: Section, now: datetime | None = N
     deadline = section_deadline(ts, section)
     if deadline is None:
         return False
-    return now > deadline + timedelta(seconds=english_settings.section_grace_seconds)
+    return _aware(now) > _aware(deadline) + timedelta(seconds=english_settings.section_grace_seconds)
 
 
 async def current_stage(db: AsyncSession, ts: TestSession) -> Stage:

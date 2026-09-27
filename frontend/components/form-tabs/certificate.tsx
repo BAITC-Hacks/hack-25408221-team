@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Upload } from "lucide-react"
+import { FileUploadDropzone } from "@/components/ui/file-upload-dropzone"
 
 interface CertificateTabProps {
   formData: Record<string, unknown>
@@ -36,19 +36,10 @@ export function CertificateTab({ formData, updateFormData, showErrors }: Certifi
 
         {/* Document upload */}
         <div className="mt-6">
-          <label className="mb-2 block text-sm font-medium">Document</label>
-          <div className="flex min-h-[150px] flex-col items-center justify-center rounded-lg border-2 border-dashed border-[#CDFA1A] bg-[#CDFA1A]/5 px-6 py-8">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-border">
-              <Upload className="h-4 w-4 text-muted-foreground" />
-            </div>
-            <p className="text-sm">
-              <span className="cursor-pointer text-[#6B8E23] hover:underline">Click to upload</span>
-              {" "}or drag and drop
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Formats allowed: PDF, JPG, JPEG, PNG, HEIC. File size must be less than 10 MB.
-            </p>
-          </div>
+          <FileUploadDropzone
+            label="Document"
+            onFileSelect={(file) => updateFormData({ socialStatusDocName: file?.name || null })}
+          />
         </div>
 
         {/* Additional information */}
@@ -73,21 +64,10 @@ export function CertificateTab({ formData, updateFormData, showErrors }: Certifi
         <div className="mt-6">
           <h4 className="text-base font-semibold">Father</h4>
           <div className="mt-4">
-            <label className="mb-2 block text-sm font-medium">
-              Certificate of father&apos;s income
-            </label>
-            <div className="flex min-h-[120px] flex-col items-center justify-center rounded-lg border-2 border-dashed border-[#CDFA1A] bg-[#CDFA1A]/5 px-6 py-6">
-              <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-full border border-border">
-                <Upload className="h-3 w-3 text-muted-foreground" />
-              </div>
-              <p className="text-sm">
-                <span className="cursor-pointer text-[#6B8E23] hover:underline">Click to upload</span>
-                {" "}or drag and drop
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Formats allowed: JPG, JPEG, PNG, HEIC, PDF. File size must be less than 10 MB.
-              </p>
-            </div>
+            <FileUploadDropzone
+              label="Certificate of father's income"
+              onFileSelect={(file) => updateFormData({ fatherIncomeCertName: file?.name || null })}
+            />
           </div>
         </div>
 
@@ -95,21 +75,10 @@ export function CertificateTab({ formData, updateFormData, showErrors }: Certifi
         <div className="mt-8">
           <h4 className="text-base font-semibold">Mother</h4>
           <div className="mt-4">
-            <label className="mb-2 block text-sm font-medium">
-              Certificate of mother&apos;s income
-            </label>
-            <div className="flex min-h-[120px] flex-col items-center justify-center rounded-lg border-2 border-dashed border-[#CDFA1A] bg-[#CDFA1A]/5 px-6 py-6">
-              <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-full border border-border">
-                <Upload className="h-3 w-3 text-muted-foreground" />
-              </div>
-              <p className="text-sm">
-                <span className="cursor-pointer text-[#6B8E23] hover:underline">Click to upload</span>
-                {" "}or drag and drop
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Formats allowed: JPG, JPEG, PNG, HEIC, PDF. File size must be less than 10 MB.
-              </p>
-            </div>
+            <FileUploadDropzone
+              label="Certificate of mother's income"
+              onFileSelect={(file) => updateFormData({ motherIncomeCertName: file?.name || null })}
+            />
           </div>
         </div>
 
@@ -117,21 +86,10 @@ export function CertificateTab({ formData, updateFormData, showErrors }: Certifi
         <div className="mt-8">
           <h4 className="text-base font-semibold">Guardian</h4>
           <div className="mt-4">
-            <label className="mb-2 block text-sm font-medium">
-              Certificate of guardian&apos;s income
-            </label>
-            <div className="flex min-h-[120px] flex-col items-center justify-center rounded-lg border-2 border-dashed border-[#CDFA1A] bg-[#CDFA1A]/5 px-6 py-6">
-              <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-full border border-border">
-                <Upload className="h-3 w-3 text-muted-foreground" />
-              </div>
-              <p className="text-sm">
-                <span className="cursor-pointer text-[#6B8E23] hover:underline">Click to upload</span>
-                {" "}or drag and drop
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Formats allowed: JPG, JPEG, PNG, HEIC, PDF. File size must be less than 10 MB.
-              </p>
-            </div>
+            <FileUploadDropzone
+              label="Certificate of guardian's income"
+              onFileSelect={(file) => updateFormData({ guardianIncomeCertName: file?.name || null })}
+            />
           </div>
         </div>
       </div>
