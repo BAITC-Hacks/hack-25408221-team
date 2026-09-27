@@ -26,9 +26,17 @@ export function getDefaultApiUrl(): string {
   return `${serverBase.replace(/\/$/, "")}/api/english`
 }
 
+function getPlatformToken(): string | null {
+  if (typeof window === "undefined") return null
+  const local = localStorage.getItem("accessToken")
+  if (local) return local
+  const match = document.cookie.match(/(?:^|;\s*)accessToken=([^;]+)/)
+  return match ? decodeURIComponent(match[1]) : null
+}
+
 export function getLocalToken(): string | null {
   if (typeof window === "undefined") return null
-  return localStorage.getItem(ENGLISH_TOKEN_KEY)
+  return localStorage.getItem(ENGLISH_TOKEN_KEY) || getPlatformToken()
 }
 
 export function setLocalToken(token: string) {
@@ -55,7 +63,7 @@ export function setLocalSessionId(id: string) {
 
 export function getLocalAdminToken(): string | null {
   if (typeof window === "undefined") return null
-  return localStorage.getItem(ENGLISH_ADMIN_TOKEN_KEY)
+  return localStorage.getItem(ENGLISH_ADMIN_TOKEN_KEY) || getPlatformToken()
 }
 
 export function setLocalAdminToken(token: string) {

@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import HTTPException, Header, status
+from fastapi import HTTPException, Header, Request, status
 from jose import JWTError, jwt
 
 from app.config import settings
@@ -38,24 +38,28 @@ def decode_token(token: str) -> dict:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_token")
 
 
-def _bearer(authorization: str | None) -> str:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing_token")
-    return authorization.split(" ", 1)[1]
+def _bearer(authorization: str | None, request: Request | None = None) -> str:
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization.split(" ", 1)[1]
+    if request:
+        cookie_token = request.cookies.get("accessToken")
+        if cookie_token:
+            return cookie_token
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing_token")
 
 
-def require_applicant(authorization: str | None = Header(default=None)) -> str:
+def require_applicant(request: Request, authorization: str | None = Header(default=None)) -> str:
     """Returns the applicant id."""
-    token = _bearer(authorization)
+    token = _bearer(authorization, request)
     payload = decode_token(token)
-    if payload.get("role") != "applicant":
+    if payload.get("role") not in ("applicant", "admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not_applicant")
     return payload["sub"]
 
 
-def require_admin(authorization: str | None = Header(default=None)) -> str:
-    """Returns the admin email."""
-    token = _bearer(authorization)
+def require_admin(request: Request, authorization: str | None = Header(default=None)) -> str:
+    """Returns the admin email or id."""
+    token = _bearer(authorization, request)
     payload = decode_token(token)
     if payload.get("role") != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not_admin")
