@@ -1,6 +1,6 @@
-# inVision University — AI-Powered Admissions Platform
+# inVision University — казачи капай (hack-25408221-team)
 
-> **inVision U by inDrive** — a university admissions platform with an AI voice interviewer, automated ML evaluation pipeline, and 4-tier admissions triage system.
+> **inVision U by inDrive** — a university admissions platform with an AI voice interviewer, automated CEFR English placement testing & AI proctoring, ML evaluation pipeline, and 4-tier admissions triage system.
 
 ---
 
@@ -8,12 +8,11 @@
 
 ### Live Deployment
 
-
-|                 | URL                                                                                                                                                                      |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Frontend**    | [https://invision-frontend.livelymushroom-33a1a220.eastus.azurecontainerapps.io/](https://invision-frontend.livelymushroom-33a1a220.eastus.azurecontainerapps.io/)       |
-| **Backend API** | [https://invision-backend.livelymushroom-33a1a220.eastus.azurecontainerapps.io/](https://invision-backend.livelymushroom-33a1a220.eastus.azurecontainerapps.io/)         |
-| **API Docs**    | [https://invision-backend.livelymushroom-33a1a220.eastus.azurecontainerapps.io/docs](https://invision-backend.livelymushroom-33a1a220.eastus.azurecontainerapps.io/docs) |
+| Service | Live URL |
+| :--- | :--- |
+| **Frontend Portal** | [https://kazachi-kapai.govtech-kz.com/](https://kazachi-kapai.govtech-kz.com/) |
+| **English Placement Gateway** | [https://kazachi-kapai.govtech-kz.com/english](https://kazachi-kapai.govtech-kz.com/english) |
+| **API Documentation** | [https://kazachi-kapai.govtech-kz.com/docs](https://kazachi-kapai.govtech-kz.com/docs) |
 
 
 > Open the **Frontend URL** — everything is live and connected. No local setup needed.
@@ -340,6 +339,3 @@ The platform is designed to be extended indefinitely. The architecture supports 
 - **Cohort analytics** — year-over-year trends, program demand forecasting, diversity reports
 - **University SIS integration** — push accepted applicants directly into enrollment systems
 - **Multi-reviewer workflow** — committee assignments, comment threads, voting on borderline cases
-                                                            
-
-
