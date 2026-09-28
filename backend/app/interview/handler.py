@@ -609,8 +609,13 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
         if not evaluation_saved:
             await mark_incomplete()
         try:
+            error_msg = (
+                "AI service unavailable in this region (VPN/proxy required)"
+                if "User location" in str(e)
+                else "An internal error occurred"
+            )
             await websocket.send_text(
-                json.dumps({"type": "error", "message": "An internal error occurred"})
+                json.dumps({"type": "error", "message": error_msg})
             )
         except Exception:
             pass

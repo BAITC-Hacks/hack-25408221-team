@@ -1,8 +1,10 @@
+from typing import Optional
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     gemini_api_key: str
+    gemini_proxy_url: Optional[str] = None
     db_host: str
     db_port: int = 5432
     db_user: str = "postgres"

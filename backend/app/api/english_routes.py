@@ -689,13 +689,14 @@ async def post_events(
     for e in sorted(body.events, key=lambda event: event.seq):
         if last is not None and e.seq <= last:
             continue
+        ts_client = e.ts_client.replace(tzinfo=None) if e.ts_client else None
         if last is not None and e.seq > last + 1:
             db.add(
                 ProctorEvent(
                     session_id=session_id,
                     seq=e.seq - 1,
                     type="seq_gap",
-                    ts_client=e.ts_client,
+                    ts_client=ts_client,
                     data={"expected": last + 1, "got": e.seq},
                 )
             )
@@ -705,7 +706,7 @@ async def post_events(
                 seq=e.seq,
                 type=e.type,
                 section=Section(e.section) if e.section else None,
-                ts_client=e.ts_client,
+                ts_client=ts_client,
                 data=e.data,
             )
         )
