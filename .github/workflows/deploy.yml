@@ -38,7 +38,6 @@ jobs:
           mkdir -p .next/standalone/.next/static .next/standalone/public
           cp -r .next/static/* .next/standalone/.next/static/
           cp -r public/* .next/standalone/public/
-          tar czf /tmp/frontend-standalone.tar.gz -C .next/standalone .
 
       - name: Setup SSH
         uses: webfactory/ssh-agent@v0.9.0
@@ -53,9 +52,8 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
 
-          echo "Transferring frontend standalone bundle..."
-          scp /tmp/frontend-standalone.tar.gz "${USER}@${HOST}:/tmp/"
-          ssh "${USER}@${HOST}" "tar xzf /tmp/frontend-standalone.tar.gz -C /home/kazachi_kapai/app/frontend/ && rm -f /tmp/frontend-standalone.tar.gz"
+          echo "Syncing frontend standalone bundle..."
+          rsync -avz --delete frontend/.next/standalone/ "${USER}@${HOST}:/home/kazachi_kapai/app/frontend/"
 
           echo "Syncing backend code..."
           rsync -avz --exclude '.venv' --exclude 'venv' --exclude '__pycache__' --exclude '.env' --exclude 'uploads' backend/app/ "${USER}@${HOST}:/home/kazachi_kapai/app/backend/app/"
