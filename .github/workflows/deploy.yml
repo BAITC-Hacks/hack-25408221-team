@@ -65,7 +65,7 @@ jobs:
           ssh "${USER}@${HOST}" "cd /home/kazachi_kapai/app/backend && /home/kazachi_kapai/venv/bin/alembic upgrade head"
 
           echo "Restarting services..."
-          ssh "${USER}@${HOST}" "systemctl --user restart invision-backend invision-frontend"
+          ssh "${USER}@${HOST}" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); systemctl --user restart invision-backend invision-frontend"
 
       - name: Verify Live Deployment
         run: |
