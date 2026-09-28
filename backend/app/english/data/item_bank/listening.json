@@ -1,0 +1,44 @@
+[
+  {"id": "L-RT-001", "section": "listening", "type": "clip", "stage": "routing", "cefr": 3,
+   "audio": "listening/L-RT-001.wav", "duration_s": 28,
+   "transcript": "Hi, I'm calling about the apartment you listed. Is it still available for next month?",
+   "questions": [
+     {"id": "q1", "type": "mcq", "prompt": "Why is the caller phoning?", "options": ["To sell an apartment", "To ask about renting an apartment", "To report a problem", "To cancel a booking"], "answer": 1},
+     {"id": "q2", "type": "gap", "prompt": "The caller wants the apartment for next ___.", "accept": ["month"]}
+   ], "status": "approved"},
+  {"id": "L-RT-002", "section": "listening", "type": "clip", "stage": "routing", "cefr": 3,
+   "audio": "listening/L-RT-002.wav", "duration_s": 25,
+   "transcript": "The museum opens at nine in the morning and closes at six in the evening, except on Mondays when it is closed.",
+   "questions": [
+     {"id": "q1", "type": "mcq", "prompt": "When is the museum closed?", "options": ["Sundays", "Mondays", "Saturdays", "Never"], "answer": 1},
+     {"id": "q2", "type": "gap", "prompt": "The museum closes at ___ in the evening.", "accept": ["six", "6"]}
+   ], "status": "approved"},
+  {"id": "L-EZ-001", "section": "listening", "type": "clip", "stage": "easy", "cefr": 2,
+   "audio": "listening/L-EZ-001.wav", "duration_s": 20,
+   "transcript": "My name is Anna. I have two brothers and one sister. We live in a small house near the school.",
+   "questions": [
+     {"id": "q1", "type": "mcq", "prompt": "How many brothers does Anna have?", "options": ["One", "Two", "Three", "None"], "answer": 1},
+     {"id": "q2", "type": "gap", "prompt": "The house is near the ___.", "accept": ["school"]}
+   ], "status": "approved"},
+  {"id": "L-EZ-002", "section": "listening", "type": "clip", "stage": "easy", "cefr": 2,
+   "audio": "listening/L-EZ-002.wav", "duration_s": 22,
+   "transcript": "Today the weather is cold and rainy. Tomorrow it will be warmer, with some sun in the afternoon.",
+   "questions": [
+     {"id": "q1", "type": "mcq", "prompt": "What is the weather like today?", "options": ["Hot and sunny", "Cold and rainy", "Snowy", "Windy"], "answer": 1},
+     {"id": "q2", "type": "gap", "prompt": "Tomorrow will be ___, with some sun.", "accept": ["warmer"]}
+   ], "status": "approved"},
+  {"id": "L-HD-001", "section": "listening", "type": "clip", "stage": "hard", "cefr": 5,
+   "audio": "listening/L-HD-001.wav", "duration_s": 38,
+   "transcript": "Despite initial skepticism from the board, the proposal to restructure the department was ultimately approved, contingent on a thorough review after six months.",
+   "questions": [
+     {"id": "q1", "type": "mcq", "prompt": "What was the board's initial reaction?", "options": ["Enthusiastic support", "Skepticism", "Indifference", "Immediate rejection"], "answer": 1},
+     {"id": "q2", "type": "gap", "prompt": "Approval is contingent on a review after ___ months.", "accept": ["six", "6"]}
+   ], "status": "approved"},
+  {"id": "L-HD-002", "section": "listening", "type": "clip", "stage": "hard", "cefr": 5,
+   "audio": "listening/L-HD-002.wav", "duration_s": 35,
+   "transcript": "The panel concluded that, notwithstanding the promising preliminary data, further longitudinal studies would be necessary before any policy recommendation could be made.",
+   "questions": [
+     {"id": "q1", "type": "mcq", "prompt": "What did the panel conclude was necessary?", "options": ["Immediate policy change", "More long-term studies", "Cancelling the project", "Nothing further"], "answer": 1},
+     {"id": "q2", "type": "gap", "prompt": "The preliminary data was described as ___.", "accept": ["promising"]}
+   ], "status": "approved"}
+]

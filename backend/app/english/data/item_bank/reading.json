@@ -1,0 +1,24 @@
+[
+  {"id": "R-CT-001", "section": "reading", "type": "ctest", "stage": "routing", "cefr": 3,
+   "segments": [
+     "The city gr", {"answer": "ew"}, " quickly after the new fact", {"answer": "ory"},
+     " opened. Many peo", {"answer": "ple"}, " moved there to fi", {"answer": "nd"},
+     " work, and hous", {"answer": "ing"}, " prices ro", {"answer": "se"}, " as a result."
+   ], "status": "approved"},
+  {"id": "R-P-EZ-001", "section": "reading", "type": "passage", "stage": "easy", "cefr": 2,
+   "text": "Maria works at a small bakery in the town center. She starts work at six in the morning and finishes at two in the afternoon. On weekends, the bakery is closed, and Maria spends time with her family.",
+   "questions": [
+     {"id": "q1", "type": "mcq", "prompt": "Where does Maria work?", "options": ["A school", "A bakery", "A hospital", "A shop"], "answer": 1},
+     {"id": "q2", "type": "mcq", "prompt": "What time does Maria start work?", "options": ["Six in the morning", "Two in the afternoon", "Nine in the morning", "Midnight"], "answer": 0},
+     {"id": "q3", "type": "tfng", "prompt": "The bakery is open on weekends.", "answer": "false"},
+     {"id": "q4", "type": "mcq", "prompt": "What does Maria do on weekends?", "options": ["Works extra hours", "Spends time with family", "Travels abroad", "Studies"], "answer": 1}
+   ], "status": "approved"},
+  {"id": "R-P-HD-001", "section": "reading", "type": "passage", "stage": "hard", "cefr": 5,
+   "text": "The committee's decision to postpone the vote, while ostensibly procedural, reflected deeper disagreements about the initiative's long-term feasibility. Proponents argued that the delay would allow for more rigorous cost analysis, whereas critics contended it was a tactic to quietly shelve the proposal altogether. Neither side, however, disputed that the underlying infrastructure was in urgent need of investment.",
+   "questions": [
+     {"id": "q1", "type": "mcq", "prompt": "What did proponents of the delay argue?", "options": ["It would kill the proposal", "It would allow more rigorous analysis", "It was unnecessary", "It violated procedure"], "answer": 1},
+     {"id": "q2", "type": "tfng", "prompt": "Both sides agreed the infrastructure needed investment.", "answer": "true"},
+     {"id": "q3", "type": "mcq", "prompt": "What did critics suspect the delay was really about?", "options": ["Saving money", "Shelving the proposal", "Following procedure", "Building consensus"], "answer": 1},
+     {"id": "q4", "type": "tfng", "prompt": "The postponement was described as purely procedural by the passage's author.", "answer": "not_given"}
+   ], "status": "approved"}
+]

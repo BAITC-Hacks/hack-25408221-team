@@ -6,11 +6,13 @@ class Settings(BaseSettings):
     db_host: str
     db_port: int = 5432
     db_user: str = "postgres"
+    db_password: str = ""
     db_name: str = "postgres"
     db_use_iam_auth: bool = True
     db_region: str = "us-east-1"
     aws_region: str = "eu-west-1"
     aws_s3_bucket: str = ""
+    aws_endpoint_url: str = ""
     model: str = "gemini-3.1-flash-live-preview"
     max_interview_duration: int = 300
     jwt_secret: str

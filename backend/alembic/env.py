@@ -1,6 +1,5 @@
 import sys
 import os
-import boto3
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
@@ -15,7 +14,10 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-from app.infrastructure.models import UserTable, SessionTable
+from app.infrastructure.models import UserTable, SessionTable, RatingEventTable
+from app.english.infra.models import (
+    Applicant, IeltsCheck, Item, TestSession, Response, Checkin, ProctorEvent, Review
+)
 from sqlmodel import SQLModel
 
 target_metadata = SQLModel.metadata
@@ -25,6 +27,8 @@ def get_rds_url() -> str:
     from app.config import settings
 
     if settings.db_use_iam_auth:
+        import boto3
+
         client = boto3.client("rds", region_name=settings.db_region)
         token = client.generate_db_auth_token(
             DBHostname=settings.db_host,
@@ -33,6 +37,11 @@ def get_rds_url() -> str:
             Region=settings.db_region,
         )
         return f"postgresql://{settings.db_user}:{token}@{settings.db_host}:{settings.db_port}/{settings.db_name}?sslmode=require"
+    if settings.db_password:
+        from urllib.parse import quote_plus
+
+        pwd = quote_plus(settings.db_password)
+        return f"postgresql://{settings.db_user}:{pwd}@{settings.db_host}:{settings.db_port}/{settings.db_name}"
     return f"postgresql://{settings.db_user}@{settings.db_host}:{settings.db_port}/{settings.db_name}"
 
 

@@ -20,15 +20,25 @@ class S3Client:
             import boto3
             from botocore.config import Config
 
-            self._s3 = boto3.client(
-                "s3",
+            config_kwargs = {
+                "retries": {"max_attempts": 3, "mode": "standard"},
+                "signature_version": "s3v4",
+                "s3": {"addressing_style": "path", "payload_signing_enabled": False},
+            }
+            try:
+                Config(request_checksum_calculation="when_required")
+                config_kwargs["request_checksum_calculation"] = "when_required"
+                config_kwargs["response_checksum_validation"] = "when_required"
+            except (TypeError, ValueError):
+                pass
+
+            client_kwargs = dict(
                 region_name=settings.aws_region,
-                config=Config(
-                    retries={"max_attempts": 3, "mode": "standard"},
-                    signature_version="s3v4",
-                    s3={"addressing_style": "path"},
-                ),
+                config=Config(**config_kwargs),
             )
+            if settings.aws_endpoint_url:
+                client_kwargs["endpoint_url"] = settings.aws_endpoint_url
+            self._s3 = boto3.client("s3", **client_kwargs)
 
     async def upload_file(
         self, file_key: str, file_content: bytes, content_type: str = "video/webm"

@@ -1,0 +1,129 @@
+# Production / Hetzner overlay for inVision U (Traefik / Coolify integrated)
+# Usage locally (no domain, no TLS):
+#   cp backend/.env.example backend/.env
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build
+#
+# On Hetzner (hel1 CX22, with Traefik & Let's Encrypt SSL):
+#   Provides full HTTPS (https://invision.2.29.37.96.nip.io) and WSS (wss://)
+#   by integrating directly with Coolify's built-in Traefik proxy.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - invision
+
+  # Caddy acts as a local fallback on port 8081. In production on the VPS,
+  # Traefik (coolify-proxy) handles ports 80/443 directly via docker labels,
+  # so Caddy is only active if run manually or during local testing.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    networks:
+      - invision
+    profiles:
+      - caddy-local
+
+  # Override backend to join coolify network and configure Traefik SSL labels
+  backend:
+    env_file:
+      - ./backend/.env
+    environment:
+      DB_HOST: db
+      DB_USE_IAM_AUTH: "false"
+      CORS_ORIGINS: "https://invision.2.29.37.96.nip.io,http://localhost:3000,http://127.0.0.1:3000"
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - invision
+      - coolify
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    labels:
+      - "traefik.enable=true"
+      # HTTP Router (redirect to HTTPS)
+      - "traefik.http.routers.invision-backend-http.rule=Host(`invision-api.2.29.37.96.nip.io`)"
+      - "traefik.http.routers.invision-backend-http.entrypoints=http"
+      - "traefik.http.routers.invision-backend-http.middlewares=redirect-to-https-backend"
+      # MIDDLEWARE definition for redirect
+      - "traefik.http.middlewares.redirect-to-https-backend.redirectscheme.scheme=https"
+      # HTTPS Router
+      - "traefik.http.routers.invision-backend-https.rule=Host(`invision-api.2.29.37.96.nip.io`)"
+      - "traefik.http.routers.invision-backend-https.entrypoints=https"
+      - "traefik.http.routers.invision-backend-https.tls=true"
+      - "traefik.http.routers.invision-backend-https.tls.certresolver=letsencrypt"
+      # Service definition (corresponds to compile-time service backend)
+      - "traefik.http.services.backend.loadbalancer.server.port=8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: https://invision-api.2.29.37.96.nip.io
+        NEXT_PUBLIC_WS_URL: wss://invision-api.2.29.37.96.nip.io
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - invision
+      - coolify
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      # HTTP Router (redirect to HTTPS)
+      - "traefik.http.routers.invision-frontend-http.rule=Host(`invision.2.29.37.96.nip.io`)"
+      - "traefik.http.routers.invision-frontend-http.entrypoints=http"
+      - "traefik.http.routers.invision-frontend-http.middlewares=redirect-to-https-frontend"
+      # MIDDLEWARE definition for redirect
+      - "traefik.http.middlewares.redirect-to-https-frontend.redirectscheme.scheme=https"
+      # HTTPS Router
+      - "traefik.http.routers.invision-frontend-https.rule=Host(`invision.2.29.37.96.nip.io`)"
+      - "traefik.http.routers.invision-frontend-https.entrypoints=https"
+      - "traefik.http.routers.invision-frontend-https.tls=true"
+      - "traefik.http.routers.invision-frontend-https.tls.certresolver=letsencrypt"
+      # Service definition (corresponds to compile-time service frontend)
+      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+
+volumes:
+  pgdata:
+  uploads:
+  caddy_data:
+  caddy_config:
+
+networks:
+  invision:
+    name: invision
+  coolify:
+    name: coolify
+    external: true

@@ -27,7 +27,8 @@ export function ApplicationSidebar() {
   const [timeRemaining, setTimeRemaining] = useState("")
 
   useEffect(() => {
-    const deadline = new Date("2026-05-30T23:59:59")
+    const deadlineStr = process.env.NEXT_PUBLIC_ADMISSIONS_DEADLINE || "2026-05-30T23:59:59"
+    const deadline = new Date(deadlineStr)
 
     const updateTimer = () => {
       const now = new Date()

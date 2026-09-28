@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { getToken, api } from "@/lib/api"
+import { getToken, api, getApiBaseUrl } from "@/lib/api"
 import { useMediaPermissions } from "@/hooks/use-media-permissions"
 import { useRecordingUpload } from "@/hooks/use-recording-upload"
+import { useInterviewTimer } from "@/hooks/useInterviewTimer"
+import { useAudioPlayback } from "@/hooks/useAudioPlayback"
 
 export type CallStatus = "idle" | "connecting" | "reconnecting" | "active" | "ended" | "error"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-const TOTAL_QUESTIONS = 6
+const TOTAL_QUESTIONS = Number(process.env.NEXT_PUBLIC_TOTAL_QUESTIONS) || 6
 // B10: on an unexpected mid-interview close, retry the signaling socket to
 // the same session_id instead of ending the call outright. Capped and
 // backed off so a persistently dead network still fails visibly.
@@ -29,7 +30,17 @@ const CLOSE_CODE_MESSAGES: Record<number, string> = {
  * on-device recording, and the interview timer. */
 export function useInterviewCall(userId: string | null) {
   const [status, setStatus] = useState<CallStatus>("idle")
-  const [timerSecs, setTimerSecs] = useState(0)
+  const { timerSecs, setTimerSecs, startTimer, stopTimer } = useInterviewTimer()
+  const {
+    playbackCtxRef,
+    audioDestRef,
+    initPlayback,
+    flushPlayback,
+    playPCM,
+    playCheckInSound,
+    stopPlayback,
+  } = useAudioPlayback()
+
   const [hasRecording, setHasRecording] = useState(false)
   const [showCheckIn, setShowCheckIn] = useState(false)
   const [currentQuestion, setCurrentQuestion] = useState(0)
@@ -61,12 +72,8 @@ export function useInterviewCall(userId: string | null) {
 
   const wsRef = useRef<WebSocket | null>(null)
   const captureCtxRef = useRef<AudioContext | null>(null)
-  const playbackCtxRef = useRef<AudioContext | null>(null)
   const workletRef = useRef<AudioWorkletNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const nextPlayAtRef = useRef(0)
-  const scheduledSourcesRef = useRef<AudioBufferSourceNode[]>([])
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   // B10 reconnect bookkeeping. mediaReadyRef tracks whether the local
   // capture/recording pipeline has already been set up once -- reconnects
   // only need a new signaling socket, not a fresh getUserMedia() prompt.
@@ -78,7 +85,6 @@ export function useInterviewCall(userId: string | null) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<BlobPart[]>([])
   const recordedBlobRef = useRef<Blob | null>(null)
-  const audioDestRef = useRef<MediaStreamAudioDestinationNode | null>(null)
 
   const { uploading, uploadError, uploaded, retryUpload } = useRecordingUpload(
     sessionId,
@@ -99,23 +105,6 @@ export function useInterviewCall(userId: string | null) {
     }
   }, [status, hasRecording])
 
-  const stopTimer = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current)
-      timerRef.current = null
-    }
-  }, [])
-
-  const startTimer = useCallback(() => {
-    stopTimer()
-    setTimerSecs(0)
-    let secs = 0
-    timerRef.current = setInterval(() => {
-      secs++
-      setTimerSecs(secs)
-    }, 1000)
-  }, [stopTimer])
-
   const stopCapture = useCallback(() => {
     workletRef.current?.disconnect()
     workletRef.current = null
@@ -126,79 +115,8 @@ export function useInterviewCall(userId: string | null) {
     }
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
-    // Closing playbackCtxRef does not stop this node's own output track --
-    // it can stay "live" and keep the recording's audio track open.
-    audioDestRef.current?.stream.getTracks().forEach((t) => t.stop())
-    playbackCtxRef.current?.close()
-    playbackCtxRef.current = null
-    audioDestRef.current = null
-    scheduledSourcesRef.current = []
-  }, [])
-
-  const flushPlayback = useCallback(() => {
-    scheduledSourcesRef.current.forEach((src) => {
-      try {
-        src.stop()
-      } catch {
-        // Already stopped/finished
-      }
-    })
-    scheduledSourcesRef.current = []
-    nextPlayAtRef.current = playbackCtxRef.current?.currentTime ?? 0
-  }, [])
-
-  const playPCM = useCallback((arrayBuffer: ArrayBuffer) => {
-    let ctx = playbackCtxRef.current
-    if (!ctx || ctx.state === "closed") {
-      ctx = new AudioContext({ sampleRate: 24000 })
-      playbackCtxRef.current = ctx
-      nextPlayAtRef.current = 0
-    }
-    if (ctx.state === "suspended") {
-      // Safari/iOS can hand back a suspended context; without resuming here
-      // the scheduled audio below is silently dropped.
-      ctx.resume()
-    }
-    const int16 = new Int16Array(arrayBuffer)
-    if (!int16.length) return
-    const f32 = new Float32Array(int16.length)
-    for (let i = 0; i < int16.length; i++) f32[i] = int16[i] / 32768
-    const buf = ctx.createBuffer(1, f32.length, 24000)
-    buf.getChannelData(0).set(f32)
-    const src = ctx.createBufferSource()
-    src.buffer = buf
-    src.connect(ctx.destination)
-    if (audioDestRef.current) {
-      src.connect(audioDestRef.current)
-    }
-    src.onended = () => {
-      scheduledSourcesRef.current = scheduledSourcesRef.current.filter((s) => s !== src)
-    }
-    scheduledSourcesRef.current.push(src)
-    const t = Math.max(ctx.currentTime, nextPlayAtRef.current)
-    src.start(t)
-    nextPlayAtRef.current = t + buf.duration
-  }, [])
-
-  const playCheckInSound = useCallback(() => {
-    try {
-      const ctx = new AudioContext()
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.connect(gain)
-      gain.connect(ctx.destination)
-      osc.frequency.value = 880
-      gain.gain.value = 0.15
-      osc.start()
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5)
-      osc.stop(ctx.currentTime + 0.5)
-      osc.onended = () => {
-        ctx.close()
-      }
-    } catch {
-      // Audio not available
-    }
-  }, [])
+    stopPlayback()
+  }, [stopPlayback])
 
   const endSession = useCallback(
     (closeWs = true) => {
@@ -212,14 +130,18 @@ export function useInterviewCall(userId: string | null) {
         wsRef.current?.close()
         wsRef.current = null
       }
-      nextPlayAtRef.current = 0
     },
     [stopTimer, stopCapture],
   )
 
   const createSocket = useCallback((sid: string): WebSocket => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
-    const host = API_URL.replace(/.*\/\//, "").replace(/\/.*$/, "")
+    let host = window.location.host
+    if (process.env.NEXT_PUBLIC_WS_URL) {
+      host = process.env.NEXT_PUBLIC_WS_URL.replace(/^.*:\/\//, "").replace(/\/.*$/, "")
+    } else if (process.env.NEXT_PUBLIC_API_URL) {
+      host = process.env.NEXT_PUBLIC_API_URL.replace(/^.*:\/\//, "").replace(/\/.*$/, "")
+    }
     const token = getToken()
     const ws = new WebSocket(`${protocol}//${host}/ws/${sid}${token ? `?token=${token}` : ""}`)
     ws.binaryType = "arraybuffer"
@@ -244,7 +166,7 @@ export function useInterviewCall(userId: string | null) {
         "Authorization": `Bearer ${token}`,
       }
 
-      const res = await fetch(`${API_URL}/api/sessions`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/sessions`, {
         method: "POST",
         headers,
         body: JSON.stringify({ userId, program }),
@@ -342,14 +264,12 @@ export function useInterviewCall(userId: string | null) {
             videoRef.current.srcObject = stream
           }
 
-          playbackCtxRef.current = new AudioContext({ sampleRate: 24000 })
-          if (playbackCtxRef.current.state === "suspended") {
-            await playbackCtxRef.current.resume()
-          }
-          nextPlayAtRef.current = 0
-          audioDestRef.current = playbackCtxRef.current.createMediaStreamDestination()
+          await initPlayback()
+          const pCtx = playbackCtxRef.current
+          if (!pCtx) throw new Error("Audio playback context failed to initialize")
+          audioDestRef.current = pCtx.createMediaStreamDestination()
 
-          const micSource = playbackCtxRef.current.createMediaStreamSource(stream)
+          const micSource = pCtx.createMediaStreamSource(stream)
           micSource.connect(audioDestRef.current)
 
           const mixedStream = new MediaStream([

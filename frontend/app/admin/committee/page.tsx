@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog"
 import { useAuth } from "@/contexts/AuthContext"
 import { api } from "@/lib/api"
+import { AdminHeader } from "@/components/admin/AdminHeader"
 import type { CommitteeGridRow, CommitteeContext, RatingIndicatorKey } from "@/lib/api"
 
 const INDICATORS: { key: RatingIndicatorKey; label: string }[] = [
@@ -125,17 +126,7 @@ export default function CommitteePage() {
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <header className="border-b border-border bg-background px-8 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Link href="/admin" className="flex items-center gap-2 text-muted-foreground hover:text-foreground">
-              <ArrowLeft className="h-4 w-4" />
-              Back to Applicants
-            </Link>
-          </div>
-          <h1 className="text-lg font-semibold">Committee Review</h1>
-        </div>
-      </header>
+      <AdminHeader />
 
       <main className="p-8">
         {fetchError && <p className="mb-4 text-red-600">{fetchError}</p>}

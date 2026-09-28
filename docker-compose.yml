@@ -1,28 +1,46 @@
-# Local development / integration testing
+# Unified Docker Compose for Local Development
 #
 # Usage:
-#   cp backend/.env.example backend/.env   # fill in real values
-#   docker compose up --build
+#   docker compose down
+#   docker compose up -d --build
 #
 # Backend:   http://localhost:8000
 # Frontend:  http://localhost:3000
-# WebSocket: ws://localhost:8000/ws/{session_id}
+# Caddy proxy: http://localhost:8080
 
 services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
     env_file:
       - ./backend/.env
     environment:
-      CORS_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
+      DB_HOST: db
+      DB_USE_IAM_AUTH: "false"
+      CORS_ORIGINS: "http://localhost,http://localhost:80,http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://localhost:8080"
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c",
-             "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -33,13 +51,62 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # NEXT_PUBLIC_* are baked in at build time — pass them as build args, not env vars
-        # On Linux replace localhost with the backend service name: http://backend:8000
         NEXT_PUBLIC_API_URL: http://localhost:8000
         NEXT_PUBLIC_WS_URL: ws://localhost:8000
-    ports:
-      - "3000:3000"
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    profiles:
+      - minio
+
+  minio-setup:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-minioadmin123} &&
+      /usr/bin/mc mb myminio/invision --ignore-existing &&
+      /usr/bin/mc anonymous set download myminio/invision &&
+      echo 'MinIO bucket invision ready' &&
+      exit 0
+      "
+    profiles:
+      - minio
+
+volumes:
+  pgdata:
+  uploads:
+  caddy_data:
+  caddy_config:
+  minio_data:

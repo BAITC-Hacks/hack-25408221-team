@@ -4,6 +4,7 @@ import { useState } from "react"
 import { Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { FileUploadDropzone } from "@/components/ui/file-upload-dropzone"
 
 interface EducationTabProps {
   formData: Record<string, unknown>
@@ -26,6 +27,31 @@ export function EducationTab({ formData, updateFormData, showErrors }: Education
           Please submit the results of your English proficiency test.
         </p>
         <div className="mt-2 h-px bg-border" />
+
+        <div className="mt-4 p-4 rounded-lg bg-muted/30 border border-border flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <p className="text-sm font-semibold">Online English Placement Gateway</p>
+            <p className="text-xs text-muted-foreground">
+              Verify your official IELTS TRF number or complete our 20-minute online placement test.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <a href="/english/ielts" target="_blank" rel="noopener noreferrer">
+              <Button size="sm" variant="outline" type="button">
+                Verify IELTS
+              </Button>
+            </a>
+            <a href="/english/test" target="_blank" rel="noopener noreferrer">
+              <Button
+                size="sm"
+                className="bg-[#CDFA1A] text-foreground hover:bg-[#CDFA1A]/90 font-medium"
+                type="button"
+              >
+                Take Placement Test
+              </Button>
+            </a>
+          </div>
+        </div>
 
         <div className="mt-6">
           <label className="mb-2 block text-sm font-medium">Exam</label>
@@ -61,24 +87,12 @@ export function EducationTab({ formData, updateFormData, showErrors }: Education
 
         {/* Upload area */}
         <div className="mt-6">
-          <label className="mb-2 block text-sm font-medium">
-            Copy of your results <span className="text-red-500">*</span>
-          </label>
-          <div className="flex min-h-[150px] flex-col items-center justify-center rounded-lg border-2 border-dashed border-[#CDFA1A] bg-[#CDFA1A]/5 px-6 py-8">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-border">
-              <Upload className="h-4 w-4 text-muted-foreground" />
-            </div>
-            <p className="text-sm">
-              <span className="cursor-pointer text-[#6B8E23] hover:underline">Click to upload</span>
-              {" "}or drag and drop
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Formats allowed: JPG, JPEG, PNG, HEIC, PDF. File size must be less than 10 MB.
-            </p>
-          </div>
-          {showErrors && (
-            <p className="mt-2 text-sm text-red-500">Field is required</p>
-          )}
+          <FileUploadDropzone
+            label="Copy of your results"
+            required
+            onFileSelect={(file) => updateFormData({ examResultsFileName: file?.name || null })}
+            error={showErrors && !formData.examResultsFileName ? "Field is required" : undefined}
+          />
         </div>
       </div>
 
@@ -121,21 +135,10 @@ export function EducationTab({ formData, updateFormData, showErrors }: Education
 
         {/* Upload area */}
         <div className="mt-6">
-          <label className="mb-2 block text-sm font-medium">
-            Copy of your certificate
-          </label>
-          <div className="flex min-h-[150px] flex-col items-center justify-center rounded-lg border-2 border-dashed border-[#CDFA1A] bg-[#CDFA1A]/5 px-6 py-8">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-border">
-              <Upload className="h-4 w-4 text-muted-foreground" />
-            </div>
-            <p className="text-sm">
-              <span className="cursor-pointer text-[#6B8E23] hover:underline">Click to upload</span>
-              {" "}or drag and drop
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Formats allowed: JPG, JPEG, PNG, HEIC, PDF. File size must be less than 10 MB.
-            </p>
-          </div>
+          <FileUploadDropzone
+            label="Copy of your certificate"
+            onFileSelect={(file) => updateFormData({ certificateFileName: file?.name || null })}
+          />
         </div>
       </div>
 
@@ -148,19 +151,10 @@ export function EducationTab({ formData, updateFormData, showErrors }: Education
         <div className="mt-2 h-px bg-border" />
 
         <div className="mt-6">
-          <label className="mb-2 block text-sm font-medium">Documents</label>
-          <div className="flex min-h-[150px] flex-col items-center justify-center rounded-lg border-2 border-dashed border-[#CDFA1A] bg-[#CDFA1A]/5 px-6 py-8">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-border">
-              <Upload className="h-4 w-4 text-muted-foreground" />
-            </div>
-            <p className="text-sm">
-              <span className="cursor-pointer text-[#6B8E23] hover:underline">Click to upload</span>
-              {" "}or drag and drop
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Formats allowed: PDF, JPG, JPEG, PNG, HEIC. File size must be less than 10 MB.
-            </p>
-          </div>
+          <FileUploadDropzone
+            label="Documents"
+            onFileSelect={(file) => updateFormData({ additionalEduFileName: file?.name || null })}
+          />
         </div>
       </div>
 

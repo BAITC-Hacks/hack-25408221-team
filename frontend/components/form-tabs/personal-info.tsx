@@ -183,18 +183,16 @@ export function PersonalInfoTab({ formData, updateFormData, showErrors }: Person
               Citizenship <span className="text-red-500">*</span>
             </label>
             <div className="relative">
-              <button
-                type="button"
-                className="flex w-full items-center justify-between rounded-lg border border-input bg-background px-4 py-3 text-left text-sm"
+              <select
+                value={citizenship}
+                onChange={(e) => setCitizenship(e.target.value)}
+                className="w-full rounded-lg border border-input bg-background px-4 py-3 text-sm outline-none transition-colors focus:ring-2 focus:ring-offset-1 focus:border-foreground"
               >
-                <div className="flex items-center gap-2">
-                  <span className="flex h-4 w-6 items-center justify-center rounded bg-[#00AFCA] text-[8px] text-white">
-                    KZ
-                  </span>
-                  {citizenship}
-                </div>
-                <ChevronDown className="h-4 w-4 text-muted-foreground" />
-              </button>
+                <option value="Kazakhstan">Kazakhstan (KZ)</option>
+                <option value="Uzbekistan">Uzbekistan (UZ)</option>
+                <option value="Kyrgyzstan">Kyrgyzstan (KG)</option>
+                <option value="Other">Other</option>
+              </select>
             </div>
           </div>
           <div>
