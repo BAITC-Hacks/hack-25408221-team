@@ -93,6 +93,7 @@ class UserWithSession(BaseModel):
     name: str
     email: str
     phone: Optional[str] = None
+    role: str = "applicant"
     has_recording: bool = False
     session: Optional[SessionResponse] = None
 

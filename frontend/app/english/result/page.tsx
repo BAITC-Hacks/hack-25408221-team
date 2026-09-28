@@ -1,109 +1,136 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { CheckCircle2, Clock, Loader2, ArrowRight } from "lucide-react"
+import { Navbar } from "@/components/layout/Navbar"
+import { api } from "@/lib/api"
+import type { MeOut } from "@/lib/english/types"
+import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { AppHeader } from "@/components/app-header"
-import { getMe, MeOut } from "@/features/english"
+import { Badge } from "@/components/ui/badge"
+import {
+  Clock,
+  ArrowRight,
+  AlertCircle,
+  Loader2,
+  GraduationCap,
+} from "lucide-react"
 
 export default function EnglishResultPage() {
+  const router = useRouter()
   const [me, setMe] = useState<MeOut | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    getMe()
-      .then(setMe)
-      .catch(() => setError("Could not retrieve assessment result."))
-      .finally(() => setLoading(false))
+    api
+      .getEnglishMe()
+      .then((data) => {
+        setMe(data as MeOut)
+        setLoading(false)
+      })
+      .catch((e: unknown) => {
+        const err = e as { message?: string }
+        setError(err?.message || "Failed to load placement outcome.")
+        setLoading(false)
+      })
   }, [])
 
   return (
-    <div className="min-h-screen bg-background">
-      <AppHeader />
+    <div className="min-h-screen bg-background flex flex-col">
+      <Navbar />
 
-      <main className="mx-auto max-w-2xl px-4 py-16">
+      <main className="mx-auto max-w-xl px-4 py-16 flex-1 w-full flex items-center justify-center">
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-20 space-y-3">
-            <Loader2 className="h-8 w-8 animate-spin text-[#6B8E23]" />
-            <p className="text-sm text-muted-foreground">Loading assessment results…</p>
+          <div className="text-center space-y-4">
+            <Loader2 className="h-10 w-10 animate-spin text-[#84a305] dark:text-[#CDFA1A] mx-auto" />
+            <p className="text-xs text-muted-foreground">Retrieving candidate evaluation records…</p>
           </div>
         ) : error ? (
-          <div className="rounded-xl border border-red-500/20 bg-card p-8 text-center space-y-4">
-            <p className="text-sm text-red-600">{error}</p>
-            <Link href="/english">
-              <Button variant="outline">Back to Overview</Button>
-            </Link>
-          </div>
+          <Card className="p-8 text-center border-destructive/30 bg-card shadow-xl rounded-3xl space-y-4 w-full">
+            <AlertCircle className="h-10 w-10 text-destructive mx-auto" />
+            <h2 className="text-lg font-bold">Unable to Load Placement</h2>
+            <p className="text-xs text-muted-foreground">{error}</p>
+            <Button onClick={() => router.push("/dashboard")} variant="outline" className="rounded-xl">
+              Return to Dashboard
+            </Button>
+          </Card>
         ) : me?.state === "needs_review" ? (
-          <div className="rounded-2xl border border-border bg-card p-8 md:p-12 text-center space-y-6">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-yellow-100 mx-auto">
-              <Clock className="h-8 w-8 text-yellow-600" />
+          <Card className="p-8 sm:p-10 border-border bg-card shadow-2xl rounded-3xl space-y-6 text-center w-full">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/20 text-amber-600 dark:text-amber-400 mx-auto">
+              <Clock className="h-10 w-10 stroke-[2.5]" />
             </div>
-            <div>
-              <span className="inline-flex rounded-full bg-yellow-100 px-3 py-1 text-xs font-semibold text-yellow-800 uppercase tracking-wide">
-                Under Admissions Review
-              </span>
-              <h1 className="text-2xl font-bold mt-3">Assessment Under Evaluation</h1>
-              <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
-                Your responses have been recorded and sent to the admissions committee for review.
-                You will be notified once your final English placement decision is confirmed.
+            <div className="space-y-2">
+              <Badge variant="outline" className="border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold">
+                UNDER ADMISSIONS REVIEW
+              </Badge>
+              <h1 className="text-2xl sm:text-3xl font-black text-foreground">
+                Evaluation Pending Committee Review
+              </h1>
+              <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+                Your English assessment responses and proctor logs have been submitted successfully. The inVision Admissions Committee is reviewing the criteria breakdown and will confirm your placement pathway shortly.
               </p>
             </div>
-            <Link href="/apply">
-              <Button variant="outline">Return to Application</Button>
-            </Link>
-          </div>
+            <Button
+              onClick={() => router.push("/dashboard")}
+              className="bg-[#CDFA1A] text-black font-extrabold hover:bg-[#b8e612] rounded-2xl h-14 px-8 text-sm gap-2"
+            >
+              Go to Candidate Dashboard
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          </Card>
         ) : me?.placement ? (
-          <div className="rounded-2xl border border-border bg-card p-8 md:p-12 text-center space-y-6">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-100 mx-auto">
-              <CheckCircle2 className="h-8 w-8 text-green-600" />
+          <Card className="p-8 sm:p-12 border-border bg-card shadow-2xl rounded-3xl space-y-6 text-center w-full">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 mx-auto">
+              <GraduationCap className="h-10 w-10 stroke-[2.5]" />
             </div>
-            <div>
-              <span
-                className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
-                  me.placement === "BACHELOR"
-                    ? "bg-green-100 text-green-800"
-                    : "bg-blue-100 text-blue-800"
-                }`}
-              >
-                {me.placement} Placement
+
+            <div className="space-y-2">
+              <span className="text-[10px] uppercase font-extrabold tracking-wider text-muted-foreground">
+                Official Language Decision
               </span>
-              <h1 className="text-2xl font-bold mt-3">Your English Placement Decision</h1>
-              <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
+              <h1 className="text-3xl sm:text-4xl font-black text-foreground tracking-tight">
+                {me.placement === "BACHELOR" ? "Bachelor Direct Entry" : "Foundation Year Entry"}
+              </h1>
+              <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed max-w-md mx-auto">
                 {me.placement === "BACHELOR"
-                  ? "Congratulations! Your English proficiency satisfies the requirements for direct entry into the Bachelor's degree program."
-                  : "You have been placed into the Foundation Year program, designed to advance your academic English skills to degree level."}
+                  ? "Congratulations! Your English proficiency satisfies university requirements for immediate enrollment into the Undergraduate Degree program."
+                  : "You have been placed into the preparatory Foundation Year program, designed to advance your academic English fluency to bachelor-level readiness."}
               </p>
             </div>
 
-            <div className="p-4 rounded-xl bg-muted/30 border border-border text-xs text-muted-foreground">
-              Confirmed via:{" "}
-              <span className="font-semibold text-foreground uppercase">
-                {me.placement_source || "assessment"}
-              </span>
+            <div className="rounded-2xl border border-border bg-secondary/20 p-4 text-xs font-semibold text-muted-foreground">
+              Placement determined via:{" "}
+              <strong className="text-foreground capitalize">
+                {me.placement_source === "ielts"
+                  ? "Official IELTS Verification"
+                  : me.placement_source === "human"
+                  ? "Admissions Committee Review"
+                  : me.placement_source?.startsWith("certificate")
+                  ? "Submitted English Certificate"
+                  : "Online CEFR Placement Exam"}
+              </strong>
             </div>
 
-            <Link href="/apply">
-              <Button className="bg-[#CDFA1A] text-foreground hover:bg-[#CDFA1A]/90 font-semibold gap-2">
-                Continue Application Flow
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-            </Link>
-          </div>
+            <Button
+              onClick={() => router.push("/dashboard")}
+              className="bg-[#CDFA1A] text-black font-extrabold hover:bg-[#b8e612] rounded-2xl h-14 px-8 text-sm gap-2 shadow-lg"
+            >
+              Continue to Candidate Dashboard
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          </Card>
         ) : (
-          <div className="rounded-2xl border border-border bg-card p-8 text-center space-y-4">
-            <h1 className="text-xl font-bold">No Completed Assessment Yet</h1>
-            <p className="text-sm text-muted-foreground">
-              You haven&apos;t completed the English placement test yet.
-            </p>
-            <Link href="/english/test">
-              <Button className="bg-[#CDFA1A] text-foreground hover:bg-[#CDFA1A]/90 font-semibold">
-                Start Test Now
+          <Card className="p-8 text-center border-border bg-card shadow-xl rounded-3xl space-y-5 w-full">
+            <h2 className="text-xl font-bold">Assessment Not Yet Completed</h2>
+            <p className="text-xs text-muted-foreground">You have not completed the English assessment or verified your score yet.</p>
+            <Link href="/english">
+              <Button className="bg-[#CDFA1A] text-black font-extrabold hover:bg-[#b8e612] rounded-xl h-12 text-xs px-6">
+                Start English Pathway
               </Button>
             </Link>
-          </div>
+          </Card>
         )}
       </main>
     </div>

@@ -1,13 +1,10 @@
 /**
- * AudioWorkletProcessor: converts Float32 microphone samples → Int16 PCM
+ * AudioWorkletProcessor: converts Float32 microphone samples -> Int16 PCM
  * The AudioContext is created at 16000 Hz so no downsampling is needed here.
  */
 class PCMProcessor extends AudioWorkletProcessor {
     constructor() {
         super();
-        // process() fires once per render quantum (128 samples, ~8ms @ 16kHz).
-        // Posting a message that often is wasteful -- batch a few quanta into
-        // one ~32ms chunk before sending it to the main thread.
         this.chunks = [];
         this.bufferedLength = 0;
         this.targetLength = 512; // 512 samples @ 16kHz = 32ms
@@ -17,8 +14,6 @@ class PCMProcessor extends AudioWorkletProcessor {
         const input = inputs[0];
         if (!input || !input[0] || input[0].length === 0) return true;
 
-        // input[0] is a view into a buffer the audio engine reuses on the
-        // next call, so it must be copied before it can be retained here.
         this.chunks.push(input[0].slice());
         this.bufferedLength += input[0].length;
 

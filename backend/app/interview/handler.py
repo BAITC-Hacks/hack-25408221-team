@@ -345,6 +345,16 @@ async def _run_interview_session(websocket: WebSocket, session_id: str) -> None:
                     await repo.complete(session_id)
                     evaluation_saved = True
                     logger.info(f"Saved evaluation for session {session_id}")
+
+                    # Automatically propose rating events for committee review
+                    try:
+                        from app.infrastructure.repositories import RatingEventRepository
+                        from app.use_cases.propose_rating_events_use_case import ProposeRatingEventsUseCase
+                        rating_event_repo = RatingEventRepository(db_session)
+                        await ProposeRatingEventsUseCase(repo, rating_event_repo).execute(session_id)
+                    except Exception as pe:
+                        logger.warning(f"Could not auto-propose rating events for {session_id}: {pe}")
+
                     return True
             except Exception as e:
                 last_error = e

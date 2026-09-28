@@ -1,28 +1,36 @@
 "use client"
 
+import { useEffect } from "react"
+import { useRouter } from "next/navigation"
+import { useAuthStore } from "@/stores/useAuthStore"
 import Link from "next/link"
-import { EnglishAssessmentFlow } from "@/features/english"
+import { Navbar } from "@/components/layout/Navbar"
+import { ProctoredTestRunner } from "@/components/english/ProctoredTestRunner"
+import { ArrowLeft } from "lucide-react"
 
 export default function EnglishTestPage() {
-  return (
-    <div className="min-h-screen bg-muted/20">
-      {/* Minimal Test Header */}
-      <header className="border-b border-border bg-background px-6 py-3">
-        <div className="mx-auto flex max-w-5xl items-center justify-between">
-          <Link href="/" className="flex items-center gap-1">
-            <span className="text-lg font-bold tracking-tight">inVision U</span>
-            <span className="text-[10px] text-muted-foreground ml-1 font-semibold uppercase tracking-wider">
-              Secure Assessment
-            </span>
-          </Link>
-          <span className="rounded-full bg-green-500/10 px-3 py-1 text-xs font-semibold text-green-700">
-            Live Proctoring Active
-          </span>
-        </div>
-      </header>
+  const router = useRouter()
+  const { user } = useAuthStore()
 
-      <main className="mx-auto max-w-5xl px-4 py-8">
-        <EnglishAssessmentFlow />
+  useEffect(() => {
+    if (user?.role === "admin") {
+      router.replace("/admin")
+    }
+  }, [user, router])
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      <Navbar />
+
+      <main className="mx-auto max-w-4xl px-4 py-8 flex-1 w-full">
+        <Link
+          href="/english"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground mb-6 transition-colors"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Exit Test
+        </Link>
+
+        <ProctoredTestRunner />
       </main>
     </div>
   )

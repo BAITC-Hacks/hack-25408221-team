@@ -44,7 +44,7 @@ def _get_list_users_use_case(db_session: AsyncSession = Depends(get_session)):
 
 
 @router.post("/register")
-@limiter.limit("10/minute")
+@limiter.limit("60/minute")
 async def register(
     request: Request,
     payload: dict,
@@ -67,7 +67,7 @@ async def register(
 
 
 @router.post("/login")
-@limiter.limit("5/minute")
+@limiter.limit("60/minute")
 async def login(
     request: Request,
     payload: dict,

@@ -5,3 +5,7 @@ __pycache__/
 CLAUDE.md
 uploads/
 *.pdf
+docker-compose.override.yml
+frontend-legacy/
+english-gate/
+*.log

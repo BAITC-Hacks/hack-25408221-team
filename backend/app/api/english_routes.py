@@ -88,9 +88,37 @@ async def session_guard(request: Request, applicant_id: str = Depends(require_ap
         yield
 
 
+async def _resolve_applicant(db: AsyncSession, applicant_id: str) -> Optional[Applicant]:
+    applicant = await db.get(Applicant, applicant_id)
+    if applicant is not None:
+        return applicant
+    applicant = (
+        await db.execute(select(Applicant).where(Applicant.external_id == applicant_id))
+    ).scalars().first()
+    if applicant is not None:
+        return applicant
+    from app.infrastructure.models import UserTable
+    user = await db.get(UserTable, applicant_id)
+    if user:
+        applicant = Applicant(
+            external_id=user.id,
+            full_name=user.name,
+            email=user.email,
+            state=ApplicantState.NEEDS_TEST,
+        )
+        db.add(applicant)
+        await db.commit()
+        await db.refresh(applicant)
+        return applicant
+    return None
+
+
 async def _own_session(db: AsyncSession, session_id: str, applicant_id: str) -> TestSession:
     ts = await db.get(TestSession, session_id)
-    if ts is None or ts.applicant_id != applicant_id:
+    if ts is None:
+        raise not_found("session")
+    applicant = await _resolve_applicant(db, applicant_id)
+    if applicant is None or ts.applicant_id != applicant.id:
         raise not_found("session")
     return ts
 
@@ -161,7 +189,7 @@ async def create_applicant(
 
 @router.get("/me", response_model=MeOut)
 async def me(applicant_id: str = Depends(require_applicant), db: AsyncSession = Depends(get_db)):
-    applicant = await db.get(Applicant, applicant_id)
+    applicant = await _resolve_applicant(db, applicant_id)
     if applicant is None:
         raise not_found("applicant")
     return MeOut(
@@ -211,13 +239,180 @@ async def submit_ielts(
     )
 
 
+# ── Certificate Exemption & Upload ──────────────────────────────────────────
+
+@router.post("/certificate")
+async def submit_certificate(
+    cert_type: str = Form(...),
+    score: str = Form(...),
+    test_date: Optional[str] = Form(None),
+    cert_number: Optional[str] = Form(None),
+    pdf: Optional[UploadFile] = File(None),
+    applicant_id: str = Depends(require_applicant),
+    db: AsyncSession = Depends(get_db),
+    storage=Depends(get_storage_dep),
+):
+    applicant = await _resolve_applicant(db, applicant_id)
+    if applicant is None:
+        raise not_found("applicant")
+
+    pdf_path = None
+    if pdf is not None:
+        data = await pdf.read(15 * 1024 * 1024 + 1)
+        if len(data) > 15 * 1024 * 1024:
+            raise HTTPException(413, "pdf_too_large")
+        ext = (pdf.filename or "certificate.pdf").split(".")[-1].lower()
+        if ext != "pdf":
+            ext = "pdf"
+        pdf_path = f"certificates/{applicant.id}/{uuid.uuid4().hex}.{ext}"
+        await storage.save(pdf_path, data)
+
+    try:
+        numeric_score = float(score.strip())
+    except ValueError:
+        numeric_score = 6.5
+
+    cert_upper = cert_type.upper()
+    is_bachelor = False
+    if "IELTS" in cert_upper and numeric_score >= 6.0:
+        is_bachelor = True
+    elif "TOEFL" in cert_upper and numeric_score >= 80:
+        is_bachelor = True
+    elif "DUOLINGO" in cert_upper and numeric_score >= 105:
+        is_bachelor = True
+    elif "CAMBRIDGE" in cert_upper and numeric_score >= 169:
+        is_bachelor = True
+    elif numeric_score >= 6.0:
+        is_bachelor = True
+
+    placement_verdict = "BACHELOR" if is_bachelor else "FOUNDATION"
+    applicant.placement = Placement(placement_verdict)
+    applicant.placement_source = f"certificate_{cert_type.lower()}"
+    applicant.state = ApplicantState.PLACED
+    db.add(applicant)
+
+    from datetime import date
+    parsed_date = date.today()
+    if test_date:
+        try:
+            parsed_date = date.fromisoformat(test_date)
+        except Exception:
+            pass
+
+    check = IeltsCheck(
+        applicant_id=applicant.id,
+        trf_number=cert_number or f"{cert_type.upper()}-{uuid.uuid4().hex[:6]}",
+        family_name=applicant.full_name,
+        date_of_birth=parsed_date,
+        test_date=parsed_date,
+        module=cert_type,
+        listening=numeric_score,
+        reading=numeric_score,
+        writing=numeric_score,
+        speaking=numeric_score,
+        overall=numeric_score,
+        verdict="VERIFIED",
+        reason=f"{cert_type} Certificate Uploaded (Score: {score})",
+        verifier_record={
+            "cert_type": cert_type,
+            "score": score,
+            "cert_number": cert_number,
+            "pdf_path": pdf_path,
+        },
+    )
+    db.add(check)
+
+    sessions = (
+        await db.execute(
+            select(TestSession)
+            .where(TestSession.applicant_id == applicant.id)
+            .order_by(TestSession.created_at.desc())
+        )
+    ).scalars().all()
+    if sessions:
+        ts = sessions[0]
+        ts.state = SessionState.DECIDED
+        ts.placement = applicant.placement
+        db.add(ts)
+
+    await db.commit()
+    await db.refresh(applicant)
+
+    return {
+        "ok": True,
+        "state": applicant.state.value if hasattr(applicant.state, "value") else str(applicant.state),
+        "placement": applicant.placement.value if hasattr(applicant.placement, "value") else str(applicant.placement),
+        "pdf_path": pdf_path,
+        "cert_type": cert_type,
+        "score": score,
+    }
+
+
+@router.get("/certificate/{applicant_id}/file")
+async def get_certificate_file(
+    applicant_id: str,
+    db: AsyncSession = Depends(get_db),
+    storage=Depends(get_storage_dep),
+):
+    applicant = await _resolve_applicant(db, applicant_id)
+    if applicant is None:
+        raise not_found("applicant")
+
+    checks = (
+        await db.execute(
+            select(IeltsCheck)
+            .where(IeltsCheck.applicant_id == applicant.id)
+            .order_by(IeltsCheck.checked_at.desc())
+        )
+    ).scalars().all()
+    if not checks:
+        raise not_found("certificate")
+
+    pdf_path = (checks[0].verifier_record or {}).get("pdf_path")
+    if not pdf_path:
+        raise not_found("certificate_file")
+
+    try:
+        path = storage.local_path(pdf_path)
+    except ValueError:
+        raise not_found("certificate_file")
+    if not Path(path).is_file():
+        raise not_found("certificate_file")
+
+    return FileResponse(path, media_type="application/pdf", filename=f"certificate_{applicant.id}.pdf")
+
+
+@router.post("/skip")
+async def skip_english_test(
+    reason: str = Form("native_or_postponed"),
+    applicant_id: str = Depends(require_applicant),
+    db: AsyncSession = Depends(get_db),
+):
+    applicant = await _resolve_applicant(db, applicant_id)
+    if applicant is None:
+        raise not_found("applicant")
+
+    applicant.placement = Placement.BACHELOR
+    applicant.placement_source = f"waived_{reason}"
+    applicant.state = ApplicantState.NEEDS_REVIEW
+    db.add(applicant)
+    await db.commit()
+    return {
+        "ok": True,
+        "state": applicant.state.value if hasattr(applicant.state, "value") else str(applicant.state),
+        "placement": applicant.placement.value if hasattr(applicant.placement, "value") else str(applicant.placement),
+    }
+
+
 # ── Sessions ──────────────────────────────────────────────────────────────────
 
 @router.post("/sessions", dependencies=[Depends(session_guard)])
 async def create_session(applicant_id: str = Depends(require_applicant), db: AsyncSession = Depends(get_db)):
-    applicant = await db.get(Applicant, applicant_id)
+    applicant = await _resolve_applicant(db, applicant_id)
     if applicant is None:
         raise not_found("applicant")
+
+    applicant_id = applicant.id
 
     if applicant.state == ApplicantState.PLACED:
         raise conflict("applicant_already_placed")
@@ -251,18 +446,18 @@ async def create_session(applicant_id: str = Depends(require_applicant), db: Asy
 
 @router.get("/sessions/current", dependencies=[Depends(session_guard)])
 async def current_session(applicant_id: str = Depends(require_applicant), db: AsyncSession = Depends(get_db)):
-    if await db.get(Applicant, applicant_id) is None:
+    applicant = await _resolve_applicant(db, applicant_id)
+    if applicant is None:
         raise not_found("applicant")
     sessions = (
         await db.execute(
             select(TestSession)
-            .where(TestSession.applicant_id == applicant_id)
+            .where(TestSession.applicant_id == applicant.id)
             .order_by(TestSession.created_at.desc())
         )
     ).scalars().all()
     if not sessions:
         return None
-    applicant = await db.get(Applicant, applicant_id)
     if applicant.state == ApplicantState.NEEDS_TEST:
         return None
     ts = sessions[0]
@@ -655,11 +850,7 @@ async def applicant_detail(
     admin: str = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    applicant = await db.get(Applicant, applicant_id)
-    if applicant is None:
-        applicant = (
-            await db.execute(select(Applicant).where(Applicant.external_id == applicant_id))
-        ).scalars().first()
+    applicant = await _resolve_applicant(db, applicant_id)
     if applicant is None:
         raise not_found("applicant")
 
@@ -923,6 +1114,22 @@ async def submit_decision(
     db: AsyncSession = Depends(get_db),
 ):
     ts = await db.get(TestSession, session_id)
+    if ts is None:
+        applicant = await _resolve_applicant(db, session_id)
+        if applicant:
+            sessions = (
+                await db.execute(
+                    select(TestSession)
+                    .where(TestSession.applicant_id == applicant.id)
+                    .order_by(TestSession.created_at.desc())
+                )
+            ).scalars().all()
+            if sessions:
+                ts = sessions[0]
+            else:
+                ts = TestSession(applicant_id=applicant.id, state=SessionState.DECIDED)
+                db.add(ts)
+                await db.flush()
     if ts is None:
         raise not_found("session")
     applicant = await db.get(Applicant, ts.applicant_id)

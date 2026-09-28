@@ -80,6 +80,7 @@ class GetUserUseCase:
             name=user.name,
             email=user.email,
             phone=user.phone,
+            role=user.role,
             has_recording=has_recording,
             session=session_response,
         ), None
@@ -99,6 +100,8 @@ class ListUsersUseCase:
         result = []
 
         for user in users:
+            if user.role == "admin":
+                continue
             session = await self.session_repo.get_by_user_id(user.id)
             has_recording = session.recording_url is not None if session else False
             session_response = _to_session_response(session) if session else None
@@ -108,6 +111,7 @@ class ListUsersUseCase:
                     name=user.name,
                     email=user.email,
                     phone=user.phone,
+                    role=user.role,
                     has_recording=has_recording,
                     session=session_response,
                 )

@@ -1,242 +1,181 @@
 "use client"
 
+import { useMemo } from "react"
 import Link from "next/link"
-import { Play, MoreVertical, Eye, Mail, CheckCircle2, Clock, XCircle } from "lucide-react"
+import { useAdminStore } from "@/stores/useAdminStore"
+import { ApiUser } from "@/lib/api"
+import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { ApiUser } from "./types"
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table"
+import {
+  Search,
+  Video,
+  ArrowRight,
+  User,
+  GraduationCap,
+  Sparkles,
+} from "lucide-react"
 
-function ScoreBar({ score, maxScore = 10 }: { score: number; maxScore?: number }) {
-  const percentage = (score / maxScore) * 100
-  const getColor = () => {
-    if (percentage >= 80) return "bg-green-500"
-    if (percentage >= 60) return "bg-[#CDFA1A]"
-    if (percentage >= 40) return "bg-yellow-500"
-    return "bg-red-500"
-  }
+export function ApplicantTable() {
+  const { applicants, searchQuery, filterProgram, setSearchQuery, setFilterProgram } =
+    useAdminStore()
 
-  return (
-    <div className="flex items-center gap-2">
-      <div className="h-2 w-20 rounded-full bg-muted">
-        <div
-          className={`h-2 rounded-full ${getColor()}`}
-          style={{ width: `${percentage}%` }}
-        />
-      </div>
-      <span className="text-xs font-medium">{score}/10</span>
-    </div>
-  )
-}
+  const filtered = useMemo(() => {
+    return applicants.filter((a) => {
+      if (a.role === "admin") return false
+      const q = searchQuery.toLowerCase().trim()
+      const matchesSearch =
+        !q ||
+        a.name.toLowerCase().includes(q) ||
+        a.email.toLowerCase().includes(q) ||
+        a.id.toLowerCase().includes(q)
 
-export function ApplicantTable({
-  applicants,
-  loading,
-  error,
-  onPlayRecording,
-}: {
-  applicants: ApiUser[]
-  loading: boolean
-  error?: string | null
-  onPlayRecording: (applicant: ApiUser) => void
-}) {
-  if (loading) {
-    return (
-      <div className="rounded-xl border border-border bg-background p-12 text-center">
-        <p className="text-muted-foreground">Loading applicants…</p>
-      </div>
-    )
-  }
+      const matchesProgram =
+        filterProgram === "all" ||
+        (a.session?.program && a.session.program.toLowerCase().includes(filterProgram.toLowerCase()))
 
-  if (error) {
-    return (
-      <div className="rounded-xl border border-border bg-background p-12 text-center">
-        <p className="text-red-600">{error}</p>
-      </div>
-    )
-  }
-
-  if (applicants.length === 0) {
-    return (
-      <div className="rounded-xl border border-border bg-background p-12 text-center">
-        <p className="text-muted-foreground">No applicants found matching your filters.</p>
-      </div>
-    )
-  }
+      return matchesSearch && matchesProgram
+    })
+  }, [applicants, searchQuery, filterProgram])
 
   return (
-    <div className="rounded-xl border border-border bg-background overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-border bg-muted/50">
-              <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                Applicant
-              </th>
-              <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                Program
-              </th>
-              <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                Status
-              </th>
-              <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                Score
-              </th>
-              <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                Recommendation
-              </th>
-              <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {applicants.map((applicant) => {
-              const evaluation = applicant.session?.evaluation
-              const hasRecording = applicant.has_recording
+    <div className="space-y-4">
+      {/* Search and Filters */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search candidate name, email, or ID…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-9 rounded-xl h-10 text-xs"
+          />
+        </div>
 
-              return (
-                <tr
-                  key={applicant.id}
-                  className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors"
-                >
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#CDFA1A]/20 text-sm font-medium">
-                        {applicant.name
-                          .split(" ")
-                          .map((n: string) => n[0])
-                          .join("")}
+        <div className="flex items-center gap-2">
+          <select
+            value={filterProgram}
+            onChange={(e) => setFilterProgram(e.target.value)}
+            className="h-10 rounded-xl border border-input bg-background px-3 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#CDFA1A]"
+          >
+            <option value="all">All Programs</option>
+            <option value="undergraduate">Undergraduate</option>
+            <option value="foundation">Foundation Year</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+        <Table>
+          <TableHeader className="bg-secondary/40">
+            <TableRow>
+              <TableHead className="font-bold text-foreground text-xs">Applicant</TableHead>
+              <TableHead className="font-bold text-foreground text-xs">Program Track</TableHead>
+              <TableHead className="font-bold text-foreground text-xs">Video Presentation</TableHead>
+              <TableHead className="font-bold text-foreground text-xs">AI Recommendation</TableHead>
+              <TableHead className="font-bold text-foreground text-xs">Language Status</TableHead>
+              <TableHead className="text-right font-bold text-foreground text-xs">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={6} className="h-32 text-center text-xs text-muted-foreground">
+                  No applicants matching current filters.
+                </TableCell>
+              </TableRow>
+            ) : (
+              filtered.map((a) => {
+                const evalData = a.session?.evaluation
+                const score = evalData?.overall_score
+                const rec = evalData?.recommendation
+
+                return (
+                  <TableRow key={a.id} className="hover:bg-muted/30 transition-colors">
+                    <TableCell>
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-secondary text-xs font-black text-foreground">
+                          {a.name ? a.name[0].toUpperCase() : <User className="h-4 w-4" />}
+                        </div>
+                        <div>
+                          <div className="font-bold text-foreground text-sm">{a.name}</div>
+                          <div className="text-xs text-muted-foreground">{a.email}</div>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium">{applicant.name}</p>
-                        <p className="text-sm text-muted-foreground">{applicant.email}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span
-                      className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${
-                        applicant.session?.program === "Undergraduate"
-                          ? "bg-[#CDFA1A]/20 text-foreground"
-                          : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      {applicant.session?.program || "—"}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span
-                      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
-                        hasRecording
-                          ? "bg-green-100 text-green-700"
-                          : "bg-yellow-100 text-yellow-700"
-                      }`}
-                    >
-                      {hasRecording ? (
-                        <>
-                          <CheckCircle2 className="h-3 w-3" />
-                          Has Recording
-                        </>
+                    </TableCell>
+
+                    <TableCell>
+                      <Badge variant="outline" className="text-[11px] font-semibold">
+                        {a.session?.program || "Undergraduate"}
+                      </Badge>
+                    </TableCell>
+
+                    <TableCell>
+                      {a.has_recording ? (
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                            <Video className="h-3 w-3" />
+                            {score ? `${score}/10` : "WebM Ready"}
+                          </span>
+                        </div>
                       ) : (
-                        <>
-                          <Clock className="h-3 w-3" />
-                          Pending
-                        </>
+                        <span className="text-xs text-muted-foreground">Pending Call</span>
                       )}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    {evaluation?.overall_score ? (
-                      <ScoreBar score={evaluation.overall_score} />
-                    ) : (
-                      <span className="text-sm text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4">
-                    {evaluation ? (
-                      <span
-                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
-                          ["strongly_recommended", "recommended"].includes(
-                            evaluation.recommendation
-                          )
-                            ? "bg-green-100 text-green-700"
-                            : evaluation.recommendation === "not_recommended"
-                              ? "bg-red-100 text-red-700"
-                              : "bg-yellow-100 text-yellow-700"
-                        }`}
-                      >
-                        {["strongly_recommended", "recommended"].includes(
-                          evaluation.recommendation
-                        ) ? (
-                          <CheckCircle2 className="h-3 w-3" />
-                        ) : evaluation.recommendation === "not_recommended" ? (
-                          <XCircle className="h-3 w-3" />
-                        ) : (
-                          <Clock className="h-3 w-3" />
-                        )}
-                        {evaluation.recommendation === "strongly_recommended"
-                          ? "Strongly Recommended"
-                          : evaluation.recommendation === "recommended"
-                            ? "Recommended"
-                            : evaluation.recommendation === "not_recommended"
-                              ? "Not Recommended"
-                              : evaluation.recommendation === "needs_review"
-                                ? "Needs Review"
-                                : "Pending"}
+                    </TableCell>
+
+                    <TableCell>
+                      {rec ? (
+                        <Badge
+                          variant={
+                            rec.includes("strongly") || rec === "recommended"
+                              ? "default"
+                              : rec === "needs_review"
+                              ? "secondary"
+                              : "destructive"
+                          }
+                          className="capitalize text-[11px] font-bold"
+                        >
+                          {rec.replace(/_/g, " ")}
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Pending Review</span>
+                      )}
+                    </TableCell>
+
+                    <TableCell>
+                      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground font-medium">
+                        <GraduationCap className="h-3.5 w-3.5 text-[#84a305] dark:text-[#CDFA1A]" />
+                        Active Profile
                       </span>
-                    ) : (
-                      <span className="text-sm text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      {hasRecording && applicant.session && (
+                    </TableCell>
+
+                    <TableCell className="text-right">
+                      <Link href={`/admin/applicant/${a.id}`}>
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                          onClick={() => onPlayRecording(applicant)}
+                          className="h-8 gap-1 rounded-lg text-xs font-semibold hover:bg-[#CDFA1A]/20 hover:text-black dark:hover:text-[#CDFA1A]"
                         >
-                          <Play className="h-3.5 w-3.5" />
-                          Play
-                        </Button>
-                      )}
-                      <Link href={`/admin/applicant/${applicant.id}`}>
-                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                          <Eye className="h-4 w-4" />
+                          Review Dossier
+                          <ArrowRight className="h-3.5 w-3.5" />
                         </Button>
                       </Link>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem asChild>
-                            <Link href={`/admin/applicant/${applicant.id}`}>
-                              <Eye className="mr-2 h-4 w-4" />
-                              View Details
-                            </Link>
-                          </DropdownMenuItem>
-                          <DropdownMenuItem>
-                            <Mail className="mr-2 h-4 w-4" />
-                            Send Email
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+                    </TableCell>
+                  </TableRow>
+                )
+              })
+            )}
+          </TableBody>
+        </Table>
       </div>
     </div>
   )

@@ -172,14 +172,37 @@ def _ensure_owner_or_admin(owner_user_id: Optional[str], role: Optional[str], us
 @router.get("/recording/{session_id}")
 async def get_recording(
     session_id: str,
+    request: Request,
     token: Optional[str] = Query(None),
-    current_user=Depends(get_current_user),
     use_case: GetSessionUseCase = Depends(_get_get_session_use_case),
+    db_session: AsyncSession = Depends(get_session),
 ):
+    user_id = None
+    role = None
+    if token:
+        payload = decode_access_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        requesting_user = await UserRepository(db_session).get_by_id(payload.get("sub"))
+        if requesting_user:
+            user_id = requesting_user.id
+            role = requesting_user.role
+    if not user_id:
+        auth = request.headers.get("Authorization")
+        if auth and auth.startswith("Bearer "):
+            payload = decode_access_token(auth.split(" ", 1)[1])
+            if payload:
+                requesting_user = await UserRepository(db_session).get_by_id(payload.get("sub"))
+                if requesting_user:
+                    user_id = requesting_user.id
+                    role = requesting_user.role
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
     session_obj, error = await use_case.execute(session_id)
     if error or not session_obj or not session_obj.recording_url:
         raise HTTPException(status_code=404, detail="Recording not found")
-    _ensure_owner_or_admin(session_obj.user_id, current_user.role, current_user.id)
+    _ensure_owner_or_admin(session_obj.user_id, role, user_id)
 
     fresh_url = await s3_client.get_presigned_url(session_obj.recording_url)
     return RedirectResponse(url=fresh_url)

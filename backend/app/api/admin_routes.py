@@ -282,6 +282,58 @@ async def admin_submit_feedback(
     return {"session_id": session_id, "feedback_recorded": True, "rating": rating}
 
 
+@router.post("/sessions/{session_id}/rating-events")
+async def admin_create_rating_event(
+    session_id: str,
+    payload: dict,
+    admin=Depends(require_admin),
+    db_session: AsyncSession = Depends(get_session),
+):
+    """A committee admin creates their own human rating event for an indicator."""
+    indicator = payload.get("indicator")
+    valid_indicators = {i.value for i in RatingIndicator}
+    if indicator not in valid_indicators:
+        raise HTTPException(
+            status_code=400,
+            detail=f"indicator must be one of: {', '.join(sorted(valid_indicators))}",
+        )
+
+    band = payload.get("band")
+    valid_bands = {b.value for b in RatingBand}
+    if band not in valid_bands:
+        raise HTTPException(
+            status_code=400,
+            detail=f"band must be one of: {', '.join(sorted(valid_bands))}",
+        )
+
+    quote = payload.get("quote", "").strip()
+    if not quote:
+        raise HTTPException(status_code=400, detail="quote or evaluation rationale is required")
+
+    session_repo = SessionRepository(db_session)
+    session = await session_repo.get_by_id(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    status_value = payload.get("status", RatingEventStatus.ACCEPTED.value)
+    if status_value not in {RatingEventStatus.PROPOSED.value, RatingEventStatus.ACCEPTED.value}:
+        status_value = RatingEventStatus.ACCEPTED.value
+
+    from app.domain.entities import RatingEventCreate
+    rating_event_repo = RatingEventRepository(db_session)
+    event_create = RatingEventCreate(
+        session_id=session_id,
+        indicator=indicator,
+        quote=quote,
+        band=band,
+        rater_type=RaterType.HUMAN.value,
+        rater_id=admin.id,
+    )
+    created = await rating_event_repo.create(event_create, status=status_value)
+    logger.info(f"Admin {admin.id} created human rating event {created.id} for session {session_id}: {band}")
+    return created
+
+
 @router.post("/sessions/{session_id}/rating-events/{event_id}/decide")
 async def admin_decide_rating_event(
     session_id: str,
@@ -371,7 +423,17 @@ async def admin_committee_grid(
     items = []
     for session in sessions:
         user = await user_repo.get_by_id(session.user_id)
+        if not user or user.role == "admin":
+            continue
         events = await rating_event_repo.list_by_session(session.id)
+        if not events and session.transcript and len(session.transcript) >= 2:
+            try:
+                from app.use_cases.propose_rating_events_use_case import ProposeRatingEventsUseCase
+                proposer = ProposeRatingEventsUseCase(session_repo, rating_event_repo)
+                events, _ = await proposer.execute(session.id)
+                events = events or []
+            except Exception as e:
+                logger.warning(f"Could not propose rating events for {session.id}: {e}")
         current = _current_event_per_indicator(events)
         items.append(
             {
@@ -412,7 +474,16 @@ async def admin_committee_context(
         raise HTTPException(status_code=404, detail="Session not found")
 
     user = await UserRepository(db_session).get_by_id(session.user_id)
-    events = await RatingEventRepository(db_session).list_by_session(session_id)
+    rating_event_repo = RatingEventRepository(db_session)
+    events = await rating_event_repo.list_by_session(session_id)
+    if not events and session.transcript and len(session.transcript) >= 2:
+        try:
+            from app.use_cases.propose_rating_events_use_case import ProposeRatingEventsUseCase
+            proposer = ProposeRatingEventsUseCase(session_repo, rating_event_repo)
+            events, _ = await proposer.execute(session.id)
+            events = events or []
+        except Exception as e:
+            logger.warning(f"Could not propose rating events for context {session.id}: {e}")
 
     rating_events_by_indicator: dict = {indicator.value: [] for indicator in RatingIndicator}
     for event in events:

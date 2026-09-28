@@ -1,146 +1,113 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
-import { useRouter } from "next/navigation"
-import { useAuth } from "@/contexts/AuthContext"
-import { api } from "@/lib/api"
-import { ApiUser } from "@/components/admin/types"
-import { AdminHeader } from "@/components/admin/AdminHeader"
-import { StatsCards } from "@/components/admin/StatsCards"
-import { ApplicantFilters } from "@/components/admin/ApplicantFilters"
+import { useEffect } from "react"
+import Link from "next/link"
+import { Navbar } from "@/components/layout/Navbar"
 import { ApplicantTable } from "@/components/admin/ApplicantTable"
-import { RecordingModal } from "@/components/admin/RecordingModal"
+import { useAdminStore } from "@/stores/useAdminStore"
+import { useAuthStore } from "@/stores/useAuthStore"
+import { Card } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import {
+  Users,
+  Video,
+  Award,
+  Sparkles,
+  ArrowRight,
+  Shield,
+  FileCheck,
+} from "lucide-react"
 
-export default function AdminPage() {
-  const router = useRouter()
-  const { user, isAuthenticated, isLoading } = useAuth()
-
-  const [applicants, setApplicants] = useState<ApiUser[]>([])
-  const [loadingData, setLoadingData] = useState(true)
-  const [fetchError, setFetchError] = useState<string | null>(null)
-
-  const [searchQuery, setSearchQuery] = useState("")
-  const [filterProgram, setFilterProgram] = useState("all")
-  const [filterRecording, setFilterRecording] = useState("all")
-  const [selectedApplicant, setSelectedApplicant] = useState<ApiUser | null>(null)
-
-  useEffect(() => {
-    if (!isLoading && (!isAuthenticated || user?.role !== "admin")) {
-      router.replace("/signin")
-    }
-  }, [isAuthenticated, isLoading, user, router])
+export default function AdminDashboardPage() {
+  const { applicants, fetchApplicants } = useAdminStore()
+  const { user } = useAuthStore()
 
   useEffect(() => {
-    if (!isAuthenticated) return
+    fetchApplicants()
+  }, [fetchApplicants])
 
-    setLoadingData(true)
-    setFetchError(null)
-
-    api
-      .getUsers()
-      .then((data: ApiUser[]) => {
-        setApplicants(data || [])
-      })
-      .catch((err) => {
-        console.error("Failed to load applicants:", err)
-        setFetchError("Failed to load applicants from server.")
-      })
-      .finally(() => setLoadingData(false))
-  }, [isAuthenticated])
-
-  const programs = useMemo(() => {
-    const set = new Set<string>()
-    applicants.forEach((a) => {
-      if (a.session?.program) set.add(a.session.program)
-    })
-    return Array.from(set)
-  }, [applicants])
-
-  const filteredApplicants = useMemo(() => {
-    return applicants
-      .filter((u) => {
-        const q = searchQuery.toLowerCase()
-        const matchesSearch =
-          !q ||
-          u.name.toLowerCase().includes(q) ||
-          u.email.toLowerCase().includes(q) ||
-          u.id.toLowerCase().includes(q)
-
-        const matchesProgram = filterProgram === "all" || u.session?.program === filterProgram
-        const matchesRecording =
-          filterRecording === "all" ||
-          (filterRecording === "true" && u.has_recording) ||
-          (filterRecording === "false" && !u.has_recording)
-
-        return matchesSearch && matchesProgram && matchesRecording
-      })
-      .sort((a, b) => {
-        const aTime = a.session?.completed_at ?? a.session?.created_at ?? ""
-        const bTime = b.session?.completed_at ?? b.session?.created_at ?? ""
-        return bTime.localeCompare(aTime)
-      })
-  }, [applicants, searchQuery, filterProgram, filterRecording])
-
-  const stats = useMemo(() => {
-    return {
-      total: applicants.length,
-      withRecording: applicants.filter((a) => a.has_recording).length,
-      withoutRecording: applicants.filter((a) => !a.has_recording).length,
-      recommended: applicants.filter((a) =>
-        ["strongly_recommended", "recommended"].includes(
-          a.session?.evaluation?.recommendation ?? ""
-        )
-      ).length,
-    }
-  }, [applicants])
-
-  if (isLoading || (!isAuthenticated && !user)) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-muted/30">
-        <p className="text-muted-foreground">Checking authorization…</p>
-      </div>
-    )
-  }
+  const totalCandidates = applicants.length
+  const withRecordings = applicants.filter((a) => a.has_recording).length
+  const recommended = applicants.filter(
+    (a) =>
+      a.session?.evaluation?.recommendation?.includes("recommended")
+  ).length
+  const evaluated = applicants.filter((a) => a.session?.evaluation?.overall_score).length
 
   return (
-    <div className="min-h-screen bg-muted/30">
-      <AdminHeader />
+    <div className="min-h-screen bg-background flex flex-col">
+      <Navbar />
 
-      <main className="p-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold">Applicants</h1>
-          <p className="mt-1 text-muted-foreground">
-            Manage and review all student applications
-          </p>
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 flex-1 w-full space-y-8">
+        {/* Top Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="flex h-7 items-center gap-1.5 rounded-full bg-[#CDFA1A]/20 px-3 text-xs font-bold text-[#627a05] dark:text-[#CDFA1A]">
+                <Shield className="h-3.5 w-3.5" /> Admissions Committee
+              </span>
+            </div>
+            <h1 className="mt-2 text-2xl sm:text-3xl font-black tracking-tight">
+              Applicant Review Central
+            </h1>
+            <p className="mt-1 text-xs sm:text-sm text-muted-foreground">
+              Review AI interview presentations, verify speech transcripts, and audit English placements.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Link href="/admin/committee">
+              <Button className="bg-[#CDFA1A] text-black font-extrabold hover:bg-[#b8e612] rounded-xl text-xs gap-2">
+                <Sparkles className="h-3.5 w-3.5" />
+                Admissions Committee Grid
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Button>
+            </Link>
+          </div>
         </div>
 
-        <StatsCards stats={stats} />
+        {/* 4 KPI Metrics Cards */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card className="p-5 border-border bg-card shadow-sm rounded-2xl">
+            <div className="flex items-center justify-between text-muted-foreground mb-2">
+              <span className="text-xs font-semibold">Total Applicants</span>
+              <Users className="h-4 w-4 text-[#84a305] dark:text-[#CDFA1A]" />
+            </div>
+            <div className="text-2xl font-black text-foreground">{totalCandidates}</div>
+            <p className="text-[11px] text-muted-foreground mt-1">Platform wide</p>
+          </Card>
 
-        <ApplicantFilters
-          searchQuery={searchQuery}
-          setSearchQuery={setSearchQuery}
-          filterProgram={filterProgram}
-          setFilterProgram={setFilterProgram}
-          filterRecording={filterRecording}
-          setFilterRecording={setFilterRecording}
-          programs={programs}
-        />
+          <Card className="p-5 border-border bg-card shadow-sm rounded-2xl">
+            <div className="flex items-center justify-between text-muted-foreground mb-2">
+              <span className="text-xs font-semibold">Video Recordings</span>
+              <Video className="h-4 w-4 text-emerald-500" />
+            </div>
+            <div className="text-2xl font-black text-foreground">{withRecordings}</div>
+            <p className="text-[11px] text-muted-foreground mt-1">Stored in Cloud/S3</p>
+          </Card>
 
-        <ApplicantTable
-          applicants={filteredApplicants}
-          loading={loadingData}
-          error={fetchError}
-          onPlayRecording={(app) => setSelectedApplicant(app)}
-        />
+          <Card className="p-5 border-border bg-card shadow-sm rounded-2xl">
+            <div className="flex items-center justify-between text-muted-foreground mb-2">
+              <span className="text-xs font-semibold">AI Evaluated</span>
+              <FileCheck className="h-4 w-4 text-blue-500" />
+            </div>
+            <div className="text-2xl font-black text-foreground">{evaluated}</div>
+            <p className="text-[11px] text-muted-foreground mt-1">Gemini Live scored</p>
+          </Card>
+
+          <Card className="p-5 border-border bg-card shadow-sm rounded-2xl">
+            <div className="flex items-center justify-between text-muted-foreground mb-2">
+              <span className="text-xs font-semibold">Recommended</span>
+              <Award className="h-4 w-4 text-amber-500" />
+            </div>
+            <div className="text-2xl font-black text-foreground">{recommended}</div>
+            <p className="text-[11px] text-muted-foreground mt-1">Passing standard</p>
+          </Card>
+        </div>
+
+        {/* Searchable Applicant Table */}
+        <ApplicantTable />
       </main>
-
-      {selectedApplicant && selectedApplicant.session && (
-        <RecordingModal
-          applicant={selectedApplicant}
-          videoSrc={`/api/recording/${selectedApplicant.session.id}`}
-          onClose={() => setSelectedApplicant(null)}
-        />
-      )}
     </div>
   )
 }

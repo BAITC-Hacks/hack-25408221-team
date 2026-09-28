@@ -3,139 +3,135 @@
 import { useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { Eye, EyeOff } from "lucide-react"
-import { useAuth } from "@/contexts/AuthContext"
-import { decodeToken, isTokenValid } from "@/lib/auth"
-import { getApiBaseUrl } from "@/lib/api"
+import { Navbar } from "@/components/layout/Navbar"
+import { useAuthStore } from "@/stores/useAuthStore"
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
+import { AlertCircle, Loader2, Sparkles, ArrowRight } from "lucide-react"
 
 export default function SignInPage() {
   const router = useRouter()
-  const { login } = useAuth()
-  const [showPassword, setShowPassword] = useState(false)
-  const [formData, setFormData] = useState({ email: "", password: "" })
+  const { login, startDemo } = useAuthStore()
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError("")
     setLoading(true)
-
+    setError("")
     try {
-      const res = await fetch(`${getApiBaseUrl()}/api/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: formData.email, password: formData.password }),
-      })
-      const data = await res.json()
-      
-      if (!res.ok) {
-        setError(data.detail || data.error || "Login failed. Please try again.")
-        setLoading(false)
-        return
-      }
-
-      if (!data.accessToken || !data.userId) {
-        setError("Invalid response from server")
-        setLoading(false)
-        return
-      }
-      
-      if (!isTokenValid(data.accessToken)) {
-        setError("Invalid token received. Please contact support.")
-        setLoading(false)
-        return
-      }
-      
-      const decoded = decodeToken(data.accessToken)
-      const role = decoded?.role || "user"
-      
-      login(data.userId, data.name, data.accessToken, formData.email, role)
-      
-      if (role === "admin") {
+      await login(email, password)
+      const currentUser = useAuthStore.getState().user
+      if (currentUser?.role === "admin") {
         router.push("/admin")
       } else {
-        router.push("/apply")
+        router.push("/dashboard")
       }
-    } catch (err) {
-      console.error("Login error:", err)
-      setError("Could not connect to server. Is the backend running?")
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Invalid credentials"
+      setError(msg)
     } finally {
       setLoading(false)
     }
   }
 
+  const handleDemo = async () => {
+    try {
+      await startDemo()
+      router.push("/dashboard")
+    } catch (err: unknown) {
+      console.error(err)
+    }
+  }
+
   return (
-    <div className="min-h-screen bg-[#CDFA1A]">
-      <header className="border-b border-foreground/10 bg-background">
-        <div className="mx-auto flex h-16 max-w-7xl items-center px-4 md:px-8">
-          <Link href="/" className="flex items-center gap-1">
-            <span className="text-xl font-bold tracking-tight">inVision U</span>
-            <span className="text-xs text-muted-foreground">
-              <span className="block text-[10px] leading-tight">by inDrive</span>
-            </span>
-          </Link>
-        </div>
-      </header>
+    <div className="min-h-screen bg-background flex flex-col justify-center">
+      <Navbar />
 
-      <main className="flex min-h-[calc(100vh-64px)] items-center justify-center px-4 py-12">
-        <div className="w-full max-w-md rounded-lg bg-background p-8 shadow-lg">
-          <h1 className="mb-8 text-center text-3xl font-bold">Sign In</h1>
-
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div>
-              <label className="mb-2 block text-sm font-medium">Email</label>
-              <input
-                type="email"
-                placeholder="Email"
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                className="w-full rounded-lg border border-input bg-background px-4 py-3 text-sm outline-none focus:border-foreground focus:ring-1 focus:ring-foreground transition-colors"
-                required
-              />
+      <main className="mx-auto w-full max-w-md px-4 py-12 flex-1 flex flex-col justify-center">
+        <Card className="border-border bg-card p-6 sm:p-8 shadow-xl rounded-3xl">
+          <CardHeader className="p-0 mb-6 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#CDFA1A] text-black font-extrabold text-xl mx-auto mb-3">
+              in
             </div>
+            <CardTitle className="text-2xl font-black">Sign in to inVision U</CardTitle>
+            <CardDescription className="text-xs text-muted-foreground mt-1">
+              Access your application dossier, AI interview, and placement test.
+            </CardDescription>
+          </CardHeader>
 
-            <div>
-              <label className="mb-2 block text-sm font-medium">Password</label>
-              <div className="relative">
-                <input
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  className="w-full rounded-lg border border-input bg-background px-4 py-3 pr-12 text-sm outline-none focus:border-foreground focus:ring-1 focus:ring-foreground transition-colors"
+          <CardContent className="p-0 space-y-4">
+            {error && (
+              <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-foreground mb-1 block">
+                  Email Address
+                </label>
+                <Input
+                  type="email"
                   required
+                  placeholder="applicant@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-foreground mb-1 block">
+                  Password
+                </label>
+                <Input
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+
+              <Button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-[#CDFA1A] text-black font-extrabold hover:bg-[#b8e612] rounded-xl h-11 text-sm gap-2"
+              >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign In"}
+              </Button>
+            </form>
+
+            <div className="relative py-2 text-center text-[11px] text-muted-foreground">
+              <span className="bg-card px-2 relative z-10">or explore instantly</span>
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-border" />
               </div>
             </div>
 
-            {error && (
-              <p className="rounded-lg bg-red-50 p-3 text-sm text-red-600">{error}</p>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full rounded-full bg-foreground py-4 text-sm font-medium text-background transition-colors hover:bg-foreground/90 disabled:opacity-60 disabled:cursor-not-allowed"
+            <Button
+              variant="outline"
+              type="button"
+              onClick={handleDemo}
+              className="w-full rounded-xl text-xs gap-2 font-bold"
             >
-              {loading ? "Signing in..." : "Sign In"}
-            </button>
+              <Sparkles className="h-3.5 w-3.5 text-[#84a305] dark:text-[#CDFA1A]" />
+              Continue as Demo Applicant
+            </Button>
 
-            <div className="text-center">
-              <p className="text-sm text-muted-foreground">Don&apos;t have an account?</p>
-              <Link href="/signup" className="text-sm font-medium text-foreground underline">
+            <div className="pt-2 text-center text-xs text-muted-foreground">
+              Don&apos;t have an account yet?{" "}
+              <Link href="/signup" className="font-bold text-foreground underline">
                 Sign Up
               </Link>
             </div>
-          </form>
-        </div>
+          </CardContent>
+        </Card>
       </main>
     </div>
   )

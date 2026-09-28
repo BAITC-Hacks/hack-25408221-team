@@ -15,7 +15,7 @@ from app.domain.entities import (
     User,
     UserCreate,
 )
-from app.domain.enums import RaterType, SessionStatus
+from app.domain.enums import RaterType, RatingEventStatus, SessionStatus
 from app.domain.interfaces import (
     RatingEventRepositoryInterface,
     SessionRepositoryInterface,
@@ -254,7 +254,9 @@ class RatingEventRepository(RatingEventRepositoryInterface):
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(self, rating_event: RatingEventCreate) -> RatingEvent:
+    async def create(
+        self, rating_event: RatingEventCreate, status: str = RatingEventStatus.PROPOSED.value
+    ) -> RatingEvent:
         db_event = RatingEventTable(
             id=str(uuid.uuid4()),
             session_id=rating_event.session_id,
@@ -263,6 +265,7 @@ class RatingEventRepository(RatingEventRepositoryInterface):
             band=rating_event.band,
             rater_type=rating_event.rater_type,
             rater_id=rating_event.rater_id,
+            status=status,
         )
         self.session.add(db_event)
         await self.session.commit()
