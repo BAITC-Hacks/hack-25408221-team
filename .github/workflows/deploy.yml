@@ -1,0 +1,74 @@
+name: Deploy to VPS (kazachi-kapai)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy to VPS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm 11
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build Next.js standalone bundle
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: https://kazachi-kapai.govtech-kz.com
+          NEXT_PUBLIC_WS_URL: wss://kazachi-kapai.govtech-kz.com
+          NODE_ENV: production
+        run: |
+          pnpm run build
+          mkdir -p .next/standalone/.next/static .next/standalone/public
+          cp -r .next/static/* .next/standalone/.next/static/
+          cp -r public/* .next/standalone/public/
+          tar czf /tmp/frontend-standalone.tar.gz -C .next/standalone .
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Deploy to VPS
+        env:
+          HOST: ${{ secrets.VPS_HOST }}
+          USER: ${{ secrets.VPS_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
+
+          echo "Transferring frontend standalone bundle..."
+          scp /tmp/frontend-standalone.tar.gz "${USER}@${HOST}:/tmp/"
+          ssh "${USER}@${HOST}" "tar xzf /tmp/frontend-standalone.tar.gz -C /home/kazachi_kapai/app/frontend/ && rm -f /tmp/frontend-standalone.tar.gz"
+
+          echo "Syncing backend code..."
+          rsync -avz --exclude '.venv' --exclude 'venv' --exclude '__pycache__' --exclude '.env' --exclude 'uploads' backend/app/ "${USER}@${HOST}:/home/kazachi_kapai/app/backend/app/"
+          rsync -avz backend/alembic/ "${USER}@${HOST}:/home/kazachi_kapai/app/backend/alembic/"
+
+          echo "Running database migrations..."
+          ssh "${USER}@${HOST}" "cd /home/kazachi_kapai/app/backend && /home/kazachi_kapai/venv/bin/alembic upgrade head"
+
+          echo "Restarting services..."
+          ssh "${USER}@${HOST}" "systemctl --user restart invision-backend invision-frontend"
+
+      - name: Verify Live Deployment
+        run: |
+          sleep 5
+          curl -f -k https://kazachi-kapai.govtech-kz.com/api/english/health
+          echo "Deployment verified successfully on https://kazachi-kapai.govtech-kz.com!"
