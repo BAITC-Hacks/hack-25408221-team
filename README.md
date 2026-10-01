@@ -1,21 +1,18 @@
 # inVision University — казачи капай (hack-25408221-team)
 
-> **inVision U by inDrive** — a university admissions platform with an AI voice interviewer, automated CEFR English placement testing & AI proctoring, ML evaluation pipeline, and 4-tier admissions triage system.
+[English](README.md) | [Русский](README.ru.md)
+
+> **inVision U by inDrive** — a GovTech Camp hackathon project built on top of the existing inVision U admissions platform. The platform's original flow has applicants self-record video answers that the committee reviews manually. During the hackathon we turned that step into a live **AI voice agent interview** and added an **IELTS / CEFR English placement test** that decides where each candidate goes next — **foundation prep or direct admission**.
 
 ---
 
-## 🏁 Quick Start for Judges
-
-### Live Deployment
+## 🌐 Live Deployment & Credentials
 
 | Service | Live URL |
 | :--- | :--- |
 | **Frontend Portal** | [https://kazachi-kapai.govtech-kz.com/](https://kazachi-kapai.govtech-kz.com/) |
 | **English Placement Gateway** | [https://kazachi-kapai.govtech-kz.com/english](https://kazachi-kapai.govtech-kz.com/english) |
 | **API Documentation** | [https://kazachi-kapai.govtech-kz.com/docs](https://kazachi-kapai.govtech-kz.com/docs) |
-
-
-> Open the **Frontend URL** — everything is live and connected. No local setup needed.
 
 ### Admin Credentials
 
@@ -24,39 +21,137 @@ Email:    admin@admin.admin
 Password: Thcg5kEgkZR1URvtJZNUnC8PoceheUHJF
 ```
 
-Login at `/signin` → redirected to admin dashboard automatically.
-
-### Suggested review order
-
-1. `**/admin**` — Applicant list with scores, recommendations, triage tiers
-2. `**/admin/applicant/{id}**` → **Interview Answers** tab — AI-extracted Q&A from voice interview
-3. Same page → **AI Evaluation** tab — score, recommendation, strengths/concerns
-4. Same page → **Deep Analysis** tab — full ML profiling (IAF, Authenticity, Language, Triage)
-
-To experience the full applicant flow: register a new account at `/signup` → go to `/apply`.
+Login at `/signin` → automatically redirected to the admissions committee dashboard.
 
 ---
 
-## Overview
+## 🎯 The Challenge (Задача)
 
-inVision University replaces traditional admissions interviews with a real-time AI voice screening. After the interview, the system automatically:
+inVision U already runs an admissions platform: applicants **record video answers** and the committee **reviews every recording manually**. That step doesn't scale — it takes hours per applicant, attention drifts across long queues, and English level is only discovered after a human already spent time on the file.
 
-- Transcribes the full conversation (both sides)
-- Saves the AI interviewer's structured evaluation (score, recommendation, notes)
-- Runs 8 ML analysis modules on the applicant's answers
-- Prioritizes the admissions queue via a 4-tier triage system
-- Stores a video recording of the session in AWS S3
+**What we added during the hackathon:**
 
-
-| Role        | Access                                                                  |
-| ----------- | ----------------------------------------------------------------------- |
-| `applicant` | Fill form, complete AI interview, upload recording                      |
-| `admin`     | View all applicants, full ML analysis, override decisions, triage queue |
-
+1. **An AI voice agent at the recording step** — instead of a one-way recording, the applicant talks with an empathetic AI interviewer in real time. It runs a structured 6-question flow, probes vague answers ("water") with the ATOLA framework, transcribes everything, and hands the committee a quote-backed evaluation (9-competency BARS).
+2. **An IELTS / CEFR English placement step with AI proctoring** — a quick verified test that shows where to move the candidate next: **foundation (prep) year or direct admission**.
+3. **Committee tooling around it** — triage queue, deep analysis, and candidate comparison so reviewers spend minutes, not hours.
 
 ---
 
-## Architecture
+## 🚀 What We Added (Что добавили)
+
+Built on top of the existing inVision U platform (registration, application form, and the original record-and-review flow already existed):
+
+- **AI Voice Interviewer (replaces the manual review step):** Bidirectional low-latency audio streaming over WebSocket powered by Google Gemini Live API (`gemini-3.1-flash-live-preview`), with automated silence check-ins and turn-complete boundary detection.
+- **ATOLA Probing & "Water" Detection:** Dynamic AI follow-up questioning targeting Action, Thinking, Outcome, Learnings, Application — filtering rehearsed or cliché responses in real time.
+- **CEFR/IELTS English Gate (new step):** Self-contained English assessment testing grammar, vocabulary, writing, and speaking with browser-based AI proctoring (gaze, face detection, tab-switching prevention) — decides foundation prep vs. direct admission.
+- **ML Evaluation Pipeline:** 8 rule-based heuristic modules running with zero heavy ML dependencies (IAF competency scoring, authenticity analysis, baseline agreement, language estimation).
+- **9-Competency BARS Evaluation:** Behavioral Anchor Rating Scale evaluating motivation, leadership, resilience, intellectual agility, and collaboration with verifiable transcript quotes.
+- **Admissions Admin Workspace:** Comprehensive committee dashboard featuring candidate cards, side-by-side candidate comparison (`/admin/compare`), Candidate Chat history, video recording replay, and 4-tier triage queues.
+- **Production-Ready Infrastructure:** Containerized with Docker Compose, Traefik reverse proxy, automated Let's Encrypt SSL via `nip.io`, and dual-mode S3 storage.
+
+---
+
+## 👥 Team & Weekly Timeline (Кто что делал по неделям)
+
+### Core Team & Roles
+- **Aibar Berekeyev:** AI & interview pipeline optimization, backend hardening, security, and scoring models.
+- **Ossein:** Frontend architecture, UI/UX engineering, and project management.
+- **Arsen:** IELTS / CEFR English gateway integration & talent potential growth research.
+
+---
+
+### Weekly Breakdown
+
+#### Week 1 (Sep 15 – Sep 21): Foundation, Security & Pipeline Hardening
+- **Aibar:**
+  - Built the backend testing safety net (166+ test suite with Gemini Live fakes).
+  - Fixed baseline Alembic migration defects to ensure clean schema initialization.
+  - Implemented core security hardening: patched IDOR on recordings, path traversal on upload endpoints, and added session creation rate limiting.
+  - Hardened the live WebSocket audio pipeline (barge-in flush, silence monitor, auto-reconnect handling).
+  - Designed `ScorerInterface`, `RatingEventTable`, and decision-persistence models.
+- **Ossein:**
+  - Extended the existing Next.js frontend with audio capture hooks and new interview/admissions flow views.
+  - Prepared containerization configuration and began the VPS migration strategy.
+- **Arsen:**
+  - Researched admissions rubrics, candidate talent assessment criteria, and initial English placement test requirements.
+
+#### Week 2 (Sep 22 – Sep 28): English Gate, Deployment & Integrations
+- **Arsen:**
+  - Implemented the CEFR/IELTS English testing engine, proctoring rules, and objective grading logic.
+  - Formulated candidate evaluation rubrics based on language fluency and response depth.
+- **Ossein:**
+  - Consolidated the frontend into a unified portal integrating both the English Gate and AI Interview.
+  - Configured automated GitHub Actions CI/CD for zero-downtime VPS deployment.
+  - Set up production Traefik reverse proxy with Let's Encrypt wildcard SSL via `nip.io`.
+- **Aibar:**
+  - Created committee review endpoints, decision persistence, and idempotent seed scripts for demo applicants (Ada Lovelace, Grace Hopper, Alan Turing).
+  - Firewalled demographic and communication bias signals out of decision-adjacent aggregators.
+
+#### Week 3 (Sep 29 – Present): ATOLA Probing, Candidate Analytics & Polish
+- **Aibar:**
+  - Designed and implemented live agent tools (`start_question`, `log_followup`, `flag_distress`).
+  - Built the ATOLA evaluation use cases and 9-competency BARS scoring engine.
+  - Added candidate chat history tracking and distress flag logging.
+- **Ossein:**
+  - Developed the applicant comparison page (`/admin/compare`), competency radar/bar charts, question card views, and Candidate Chat drawer.
+  - Optimized build outputs and trimmed the frontend bundle specifically for integration readiness.
+- **Arsen:**
+  - Refined rubrics for evaluating candidate growth potential and soft skills under the ATOLA framework.
+
+---
+
+## ⚡ Current Status (Что работает сейчас)
+
+- **Live Deployment:** Operational at [https://kazachi-kapai.govtech-kz.com/](https://kazachi-kapai.govtech-kz.com/). *Note: depending on upstream VPS proxy routing, occasional transient latency or timeouts may occur.*
+- **Infrastructure Adaptation:** We initially prepared deployment configs for AWS RDS/S3 and Azure; when adjusting to the provided VPS environment and S3 storage, we smoothly migrated the entire stack to a self-hosted PostgreSQL 16 container, local S3-compatible storage (with MinIO support), and Traefik SSL. We are very grateful to the organizers for providing the VPS and storage infrastructure.
+- **Frontend Integration Readiness:** The frontend has been intentionally trimmed and modularized so it can easily integrate into larger university Student Information Systems (SIS).
+- **Original Flow Preserved:** The platform's classic "record a video → committee reviews manually" path still works — our AI interview and English placement steps are additive, so the committee can choose either review mode per candidate.
+- **End-to-End Working Flows:**
+  1. Candidate registration (`/signup`) and sign-in (`/signin`).
+  2. English placement test with proctoring (`/english`).
+  3. Real-time AI voice interview with live transcript streaming and audio capture (`/apply/interview`).
+  4. Video recording upload and S3 persistence.
+  5. Committee review dashboard (`/admin`), candidate deep dive (`/admin/applicant/[id]`), candidate comparison (`/admin/compare`), and manual review overrides.
+
+---
+
+## 🏁 Quick Start (Local Development)
+
+### Prerequisites
+- Docker & Docker Compose
+- Node.js 20+ & `pnpm` (for local frontend dev)
+- Python 3.10+ (for backend dev)
+- Google Gemini API key
+
+### Running with Docker Compose
+
+1. **Configure Backend Environment:**
+   ```bash
+   cp backend/.env.example backend/.env
+   ```
+   Open `backend/.env` and supply:
+   - `GEMINI_API_KEY`: Your Google Gemini API Key
+   - `JWT_SECRET`: A secure secret (e.g. `openssl rand -hex 32`)
+
+2. **Start Backend & Database:**
+   ```bash
+   docker compose up -d --build
+   ```
+
+3. **Start Frontend:**
+   ```bash
+   cd frontend
+   pnpm install
+   pnpm dev
+   ```
+
+4. **Access the Services:**
+   - **Frontend:** [http://localhost:3000](http://localhost:3000)
+   - **Backend API & Swagger Docs:** [http://localhost:8001/docs](http://localhost:8001/docs)
+
+---
+
+## 🏗️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -77,265 +172,67 @@ inVision University replaces traditional admissions interviews with a real-time 
 │         └────────────────┼────────────────────┘             │
 │                          ▼                                  │
 │  ┌─────────────┐  ┌────────────┐  ┌────────────────────┐    │
-│  │  PostgreSQL │  │Google Live │  │     AWS S3         │    │
-│  │  (AWS RDS)  │  │  Gemini AI │  │  (video storage)   │    │
+│  │  PostgreSQL │  │Google Live │  │     S3 Storage     │    │
+│  │             │  │  Gemini AI │  │  (video storage)   │    │
 │  └─────────────┘  └────────────┘  └────────────────────┘    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ### Interview Lifecycle
 
-```
-1. Register / Login      → JWT token issued
-2. Fill application form → form_data saved to DB
-3. Start interview       → session created in DB
-4. WebSocket connect     → Gemini Live session opens
-5. Audio streaming       → Browser mic → WS → Gemini → audio response → browser speaker
-6. Transcription         → Both sides transcribed in real time
-7. Interview ends        → Gemini calls end_session() → score + notes saved to DB
-8. Upload recording      → Video (webm) saved to AWS S3
-9. Admin reviews         → Full ML analysis runs on demand
-```
+1. **Register / Login** → JWT token issued.
+2. **English Gate (Optional/Mandatory)** → CEFR/IELTS placement assessment with browser proctoring.
+3. **Fill Application Form** → candidate data saved in PostgreSQL.
+4. **Start Interview Session** → session initialized, mic & camera initialized.
+5. **WebSocket Streaming** → bidirectional PCM audio streaming via Gemini Live API.
+6. **ATOLA Probing** → AI agent identifies superficial answers and asks targeted follow-ups.
+7. **Session Completion** → Gemini calls `end_session()` → structured notes and timestamps saved.
+8. **Upload Recording** → WebM video recording uploaded to S3 storage.
+9. **Committee Review** → AI evaluation, 9-competency BARS scoring, and triage tier assigned.
 
 ---
 
-## Tech Stack
+## 🧠 ML Analysis Pipeline
 
+All 8 heuristic modules run with zero heavy external ML dependencies:
 
-| Layer    | Technology                                                               |
-| -------- | ------------------------------------------------------------------------ |
-| Frontend | Next.js 16 (App Router), TypeScript, React 19, Tailwind CSS 4, shadcn/ui |
-| Backend  | Python, FastAPI, Uvicorn, SQLModel + SQLAlchemy async                    |
-| Database | PostgreSQL on AWS RDS (IAM auth)                                         |
-| AI       | Google Gemini Live API v1alpha — `gemini-3.1-flash-live-preview`         |
-| Storage  | AWS S3 (eu-west-1)                                                       |
-| Auth     | JWT HS256, bcrypt passwords, 24h token expiry                            |
+1. **Data Quality:** Measures completeness (6/6 questions answered) + transcript richness (word and turn count).
+2. **Baseline Evaluation:** Fully independent rule-based scoring counting answered questions, length, and strength indicator phrases.
+3. **AI vs. Baseline Agreement:** Compares AI recommendation against baseline (`exact`, `adjacent`, `disagreement`). Disagreements trigger Tier 4 triage.
+4. **Authenticity Analysis:** Detects scripted, coached, or AI-generated answers via specificity ratios, naturalness/filler word balance, and cross-session n-gram overlap.
+5. **Language Proficiency:** Estimates CEFR level (A1–C2) and IELTS equivalent across Grammar Accuracy, Vocabulary, Fluency, Coherence, and Listening.
+6. **IAF Competency Score:** 7 dimensions weighted by academic program (Motivation, Resilience, Vision, Collaboration, Self-Awareness, Authenticity, Contribution).
+7. **Explainability Module:** Human-readable explanation of recommendations: narrative summary, positive/negative drivers, question importance weights, and key quotes.
+8. **Error & Edge-Case Detection:** Flags contradictions between scores and transcripts, extreme outliers, or unprobed critical questions.
 
+### 4-Tier Admissions Triage Queue
 
----
-
-## Getting Started (local)
-
-The easiest way to run the entire stack (PostgreSQL database, FastAPI Backend, Next.js Frontend, and Caddy Reverse Proxy) is using **Docker Compose**.
-
-### Docker Compose Setup (Recommended)
-
-1. **Configure Environment Variables:**
-   Copy the example environment file:
-   ```bash
-   cp backend/.env.example backend/.env
-   ```
-   Open `backend/.env` and set your configuration variables:
-   * Set your `GEMINI_API_KEY` for the AI Voice Interviewer
-   * Generate and set a secure `JWT_SECRET` (e.g., `openssl rand -hex 32`)
-   * (Optional) Set `ADMIN_CREATION_SECRET` to enable the admin seeding endpoint
-
-2. **Start all services:**
-   ```bash
-   docker compose up -d --build
-   ```
-
-3. **Access the application:**
-   * **Frontend Dashboard:** [http://localhost:3000](http://localhost:3000)
-   * **Backend API Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
-   * **Unified Gateway (Caddy Proxy):** [http://localhost:8080](http://localhost:8080)
-
-4. **Seed the default Admin User:**
-   ```bash
-   curl -X POST http://localhost:8000/api/admin/create-admin \
-     -H "Content-Type: application/json" \
-     -d '{"email": "admin@admin.admin", "password": "Thcg5kEgkZR1URvtJZNUnC8PoceheUHJF", "name": "Admin", "secret": "<YOUR_ADMIN_CREATION_SECRET>"}'
-   ```
-
-5. **Stop all services:**
-   ```bash
-   docker compose down
-   ```
+| Tier | Label | Review Time | Criteria |
+| :--- | :--- | :--- | :--- |
+| **1** | **Fast Track** | ~5 min | High scores, strong data quality, high AI-baseline alignment, no anomalies. |
+| **2** | **Standard Review** | ~12 min | Consistent profile with balanced scores. |
+| **3** | **Hold Queue** | ~5 min | `not_recommended` verdict or low competency scores. |
+| **4** | **Manual Required** | ~45 min | High authenticity risk, contradictions, or AI↔baseline disagreement. |
 
 ---
 
-### Manual Setup (Without Docker)
+## 🖥️ Admissions Admin Panel
 
-### Prerequisites
-
-- Node.js 18+ and `pnpm`
-- Python 3.10+
-- Google Gemini API key
-
-### Backend
-
-```bash
-cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
-```
-
-### Frontend
-
-```bash
-cd frontend
-pnpm install
-pnpm dev
-```
-
-Frontend → `http://localhost:3000` · Backend → `http://localhost:8000` · API Docs → `http://localhost:8000/docs`
+- **Candidate Table:** Filterable by status, program, triage tier, and recommendation.
+- **Applicant Deep Dive:**
+  - *Overview:* Candidate info, triage tier, key metrics.
+  - *Interview Answers:* Extracted Q&A with ATOLA coverage indicators.
+  - *AI Evaluation:* Overall score (1–10), strengths, concerns, and committee recommendation.
+  - *Recording Replay:* Synchronized video and transcript playback.
+  - *Deep Analysis:* Full breakdown of all 8 ML analysis modules.
+- **Candidate Comparison (`/admin/compare`):** Side-by-side radar and bar chart comparison of candidate competencies.
+- **Committee Actions:** Durable decision overrides with justification and audit trails.
 
 ---
 
-## AI Interview
+## 🔮 Roadmap
 
-The AI interviewer is powered by **Google Gemini Live API** — real-time bidirectional audio streaming over WebSocket.
-
-### Two-phase structure
-
-**Phase 0 — Warm-up (1 min)**
-
-- Single question: *"What's one thing you're excited about right now?"*
-- Personalizes Phase 1 with discovered context
-
-**Phase 1 — Formal Presentation (5–6 min, 6 questions)**
-
-1. Why are you applying to inVision U?
-2. Which program and why?
-3. A major challenge you overcame — what did you learn?
-4. Long-term goals and how this program helps
-5. What leadership means to you (with a specific example)
-6. Does your family support your decision?
-
-After Question 6: AI automatically calls `end_session()` with full structured evaluation — score, recommendation, per-question notes, strengths, concerns.
-
-### Silence handling
-
-- After 20s silence → check-in message sent
-- After 2 missed check-ins → session auto-closed
-
----
-
-## ML Analysis Pipeline
-
-All 8 modules are **heuristic/rule-based** — zero external ML dependencies. Run on-demand via the admin panel.
-
-### 1. Data Quality
-
-Measures answer completeness (6/6 questions answered) + transcript richness (word count, turn count). Outputs `overall_score` 0–100.
-
-### 2. Baseline Evaluation
-
-Fully independent rule-based score — counts answered questions, answer length, strength indicator phrases. Used to cross-validate the AI's recommendation without involving AI.
-
-### 3. AI vs Baseline Agreement
-
-Compares AI recommendation against baseline. Results: `exact` / `adjacent` / `disagreement`. Strong disagreement triggers Tier 4 triage (manual review required).
-
-### 4. Authenticity Analysis
-
-Detects coached, scripted, or AI-generated responses:
-
-- **Specificity**: counts personal details (years, names, places) vs generic phrases
-- **Naturalness**: filler words, self-corrections, sentence variance — zero fillers = AI-like penalty
-- **Cross-session similarity**: 5-gram overlap against all other sessions (>60% overlap = flag)
-
-Risk levels: `low` / `medium` / `high`
-
-### 5. Language Proficiency
-
-Estimates CEFR level (A1–C2) and IELTS equivalent from transcript. Scores 5 dimensions: Grammar Accuracy, Vocabulary Richness, Fluency, Coherence, Listening Comprehension.
-
-> *Heuristic estimate only — not a certified assessment. ±1 CEFR band accuracy.*
-
-### 6. IAF Competency Score
-
-**IAF = inVision Applicant Framework** — 7 dimensions scored 1–5, weighted by program:
-
-
-| Dimension                 | Based on                      |
-| ------------------------- | ----------------------------- |
-| Motivation Depth          | Why applying, program choice  |
-| Resilience                | Challenge question            |
-| Vision Clarity            | Goals, program choice         |
-| Collaborative Orientation | Leadership, goals             |
-| Self Awareness            | Challenge, goals              |
-| Authenticity              | All answers (specificity)     |
-| Contribution Drive        | Goals, leadership, motivation |
-
-
-Weights adjust per program (`computer_science` boosts Vision Clarity, `education` boosts Contribution Drive, etc.).
-
-### 7. Explainability
-
-Human-readable explanation of the AI's recommendation: narrative summary, positive/negative factors, feature importance per question (%), key quotes, confidence verdict.
-
-### 8. Error & Edge Case Analysis
-
-Detects contradictions between AI score and actual answers. Flags unusual patterns: very long transcripts (repetition), missing critical answers, score outliers.
-
-### Triage Priority
-
-Aggregates all signals into a 4-tier admissions queue:
-
-
-| Tier | Label           | Est. review | When                                                                |
-| ---- | --------------- | ----------- | ------------------------------------------------------------------- |
-| 1    | Fast Track      | 5 min       | Strong score + quality + AI/baseline aligned + no anomalies         |
-| 2    | Standard Review | 12 min      | Normal profile                                                      |
-| 3    | Hold Queue      | 5 min       | `not_recommended` or low score                                      |
-| 4    | Manual Required | 45 min      | High authenticity risk / inconsistencies / AI↔baseline disagreement |
-
-
-### Fairness Module
-
-Monitors bias: score variance across all sessions, program parity (avg score per program), language parity (avg score by interview language).
-
----
-
-## Admin Panel — 6-Tab Applicant View
-
-
-| Tab               | Content                                                                                       |
-| ----------------- | --------------------------------------------------------------------------------------------- |
-| Overview          | Personal info, session status, ML signals sidebar (IAF, authenticity risk, CEFR, triage tier) |
-| Interview Answers | AI-extracted responses to all 6 questions + language/confidence/communication quality         |
-| AI Evaluation     | Score (1–10), recommendation badge, strengths, concerns, overall impression                   |
-| Recording         | Video player with presigned S3 URL + download                                                 |
-| Transcript        | Full conversation log with timestamps                                                         |
-| Deep Analysis     | All 8 ML modules rendered with charts and explanations                                        |
-
-
-Admins can also **override** the AI decision (with justification) and **submit feedback** on AI accuracy.
-
----
-
-## Future Roadmap
-
-The platform is designed to be extended indefinitely. The architecture supports new ML modules, new AI behaviors, and new data sources without breaking anything existing.
-
-### AI Detection & Anti-Cheating
-- **AI-generated speech detection** — flag applicants reading from ChatGPT: near-perfect grammar, zero hesitation, unnatural sentence uniformity, no filler words at all
-- **Text-reading detection** — gaze tracking via webcam (eye movement when reading vs speaking from memory), unnatural rhythm analysis
-- **Voice stress analysis** — detect rehearsed vs spontaneous delivery using prosody and pitch variance
-
-### Video & Visual Analysis
-- **Facial expression analysis** — confidence, engagement, nervousness indicators across the interview timeline
-- **Eye contact scoring** — how often the applicant looks at the camera vs reads off-screen notes
-- **Body language signals** — posture, fidgeting, hand gestures as secondary confidence indicators
-- **Lip sync verification** — confirm the voice matches the person on camera
-
-### Deeper ML Analysis
-- **Semantic consistency** — does the applicant's story stay coherent across all 6 answers, or do details contradict each other?
-- **Answer evolution tracking** — did the applicant grow more confident as the interview progressed, or more nervous?
-- **Domain vocabulary depth** — does the applicant use program-specific terminology correctly, or just drop buzzwords?
-- **Multi-session comparison** — track improvement if applicants are allowed a second attempt
-
-### AI Interviewer via Prompt Engineering
-> **The prompt is the product.** By changing the system instruction alone — zero code changes — the interviewer becomes a completely different evaluator.
-
-- **Dynamic follow-ups** — instead of a fixed 6-question script, the AI probes weak answers and expands on strong ones
-- **Program-specific tracks** — dedicated question sets for CS, Medicine, Business, Education — each surfacing the competencies that matter most for that program
-- **Deeper potential unlocking** — the AI can be instructed to gently challenge vague answers, push back on inconsistencies, encourage a nervous applicant, and guide them to articulate things they wouldn't say unprompted
-- **Fully multilingual** — adaptive conversations in Kazakh, Russian, English, or any combination, with language-aware evaluation rubrics
-
-### Platform Extensions
-- **Applicant portal** — let applicants review their transcript and feedback after decisions
-- **Cohort analytics** — year-over-year trends, program demand forecasting, diversity reports
-- **University SIS integration** — push accepted applicants directly into enrollment systems
-- **Multi-reviewer workflow** — committee assignments, comment threads, voting on borderline cases
+- **Anti-Cheating & AI Detection:** Webcam eye-gaze tracking, prosodic voice stress analysis, and speech spontaneity detection.
+- **Visual & Body Language Signals:** Head pose estimation, facial engagement markers, and lip-sync audio verification.
+- **Multi-Reviewer Workflow:** Double-blind scoring, committee voting, and threaded applicant notes.
+- **Direct SIS Integration:** Automated enrollment handoff to university Student Information Systems.
